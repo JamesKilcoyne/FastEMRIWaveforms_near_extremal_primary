@@ -595,7 +595,7 @@ class KerrEccentricEquatorial(SphericalHarmonic):
             a = -a
             xI = -xI
 
-         if a > 1 - 1e-12:
+        if a > 1 - 1e-12:
             raise ValueError(
                 "Larger black hole spin magnitude above 0.999999999999 is outside of our domain of validity."
             )
