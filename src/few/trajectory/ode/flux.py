@@ -17,9 +17,12 @@ from ...utils.globals import get_file_manager
 from ...utils.mappings.jacobian import ELdot_to_PEdot_Jacobian
 from ...utils.mappings.kerrecceq import (
     AMAX,
+    AMAX_nex,
     DELTAPMIN,
     EMAX,
+    EMAX_nex,
     PMAX_REGIONB,
+    PMAX_REGIONC,
     _kerrecceq_flux_forward_map,
     apex_of_UWYZ,
     apex_of_uwyz,
@@ -276,6 +279,8 @@ class KerrEccEqFlux(ODEBase):
         self.flux_output_convention = flux_output_convention
 
         fp = "KerrEccEqFluxData.h5"
+        fp_nex = "EXTREMAL_DATA.h5"
+   
 
         if downsample is None:
             downsample = [(1, 1, 1), (1, 1, 1)]
@@ -285,8 +290,10 @@ class KerrEccEqFlux(ODEBase):
 
         fm = get_file_manager()
         file_path = fm.get_file(fp)
+        file_path_nex = fm.get_file(fp)
 
-        with h5py.File(file_path, "r") as fluxData:
+
+        with h5py.File(file_path, "r") as fluxData , h5py.File(file_path_nex ,"r") as fluxData_nex:
             regionA = fluxData["regionA"]
             u = np.linspace(0, 1, regionA.attrs["NU"])[:: downsample_inner[0]]
             w = np.linspace(0, 1, regionA.attrs["NW"])[:: downsample_inner[1]]
@@ -448,6 +455,89 @@ class KerrEccEqFlux(ODEBase):
                 self.Edot_interp_B = TricubicSpline(u, w, z, Edot / EdotPN)
                 self.Ldot_interp_B = TricubicSpline(u, w, z, Ldot / LdotPN)
 
+
+
+            regionC = fluxData["regionA"]                                          #Near-extremal part
+            u = np.linspace(0, 1, regionA.attrs["NU"])[:: downsample_inner[0]]
+            w = np.linspace(0, 1, regionA.attrs["NW"])[:: downsample_inner[1]]
+            z = np.linspace(0, 1, regionA.attrs["NZ"])[:: downsample_inner[2]]
+
+            ugrid, wgrid, zgrid = np.asarray(
+                np.meshgrid(u, w, z, indexing="ij")
+            ).reshape(3, -1)
+            agrid, pgrid, egrid, xgrid = apex_of_uwyz(     ## Change map
+                ugrid, wgrid, np.ones_like(zgrid), zgrid
+            )
+
+            # normalise by PN contribution
+            Edot = regionC["Edot"][()][
+                :: downsample_inner[0],
+                :: downsample_inner[1],
+                :: downsample_inner[2],
+            ]
+            Ldot = regionC["Ldot"][()][
+                :: downsample_inner[0],
+                :: downsample_inner[1],
+                :: downsample_inner[2],
+            ]
+
+            if flux_output_convention == "pex":
+                # calculate pdot and edot from Edot and Ldot
+                Edothere = (Edot).flatten()
+                Ldothere = (Ldot).flatten()
+                xgrid = np.sign(agrid)
+                xgrid[xgrid == 0] = 1
+
+                Ldothere = Ldothere * xgrid
+                agrid = np.abs(agrid)
+
+                out_pdot_edot = np.asarray(
+                    [
+                        ELdot_to_PEdot_Jacobian(
+                            agrid[i],
+                            pgrid[i],
+                            egrid[i],
+                            xgrid[i],
+                            Edothere[i],
+                            Ldothere[i],
+                        )
+                        for i in range(Edothere.size)
+                    ]
+                )
+
+                # check whether there are no nans in the output and Edot and Ldot
+                if (
+                    np.isnan(out_pdot_edot).any()
+                    or np.isnan(Edot).any()
+                    or np.isnan(Ldot).any()
+                ):
+                    raise ValueError("Interpolation: nans in pdot, edot or Edot, Ldot.")
+
+                pdot = out_pdot_edot[:, 0].reshape(u.size, w.size, z.size)
+                edot = out_pdot_edot[:, 1].reshape(u.size, w.size, z.size)
+
+                risco = get_separatrix(
+                    agrid.flatten(), np.zeros_like(agrid.flatten()), xgrid.flatten()
+                )
+                psep = get_separatrix(agrid.flatten(), egrid.flatten(), xgrid.flatten())
+                pdot_pn = _pdot_PN(
+                    pgrid.flatten(), egrid.flatten(), risco, psep
+                ).reshape(u.size, w.size, z.size)
+                edot_pn = _edot_PN(
+                    pgrid.flatten(), egrid.flatten(), risco, psep
+                ).reshape(u.size, w.size, z.size)
+
+                self.pdot_interp_C = TricubicSpline(u, w, z, pdot / pdot_pn)
+                self.edot_interp_C = TricubicSpline(u, w, z, edot / edot_pn)
+
+            else:
+                EdotPN, LdotPN = _PN_alt(pgrid, egrid)
+                EdotPN = EdotPN.reshape(u.size, w.size, z.size)
+                LdotPN = LdotPN.reshape(u.size, w.size, z.size)
+
+                self.Edot_interp_C = TricubicSpline(u, w, z, Edot / EdotPN)
+                self.Ldot_interp_C = TricubicSpline(u, w, z, Ldot / LdotPN)
+
     @property
     def equatorial(self):
         return True
@@ -468,24 +558,47 @@ class KerrEccEqFlux(ODEBase):
         if np.any(np.abs(x) != 1):
             raise ValueError("Interpolation: x out of bounds. Must be either 1 or -1.")
 
-    def isvalid_e(self, e, e_buffer=[0, 0]):
-        emax = EMAX - e_buffer[1]
-        emin = e_buffer[0]
-        if np.any(e > emax) or np.any(e < emin):
-            raise ValueError(
-                f"Interpolation: e out of bounds. Must be between {emin} and {emax}."
-            )
+    def isvalid_e(self, e, a, e_buffer=[0, 0]):
 
-    def isvalid_p(self, p, p_buffer=[0, 0]):
-        pmax = PMAX - p_buffer[1]
-        pmin = PISCO_MIN + self.separatrix_buffer_dist + p_buffer[0]
-        if np.any(p > pmax) or np.any(p < pmin):
-            raise ValueError(
-                f"Interpolation: p out of bounds. Must be between {pmin} and {pmax}."
-            )
+        if a < AMAX:
+            emax = EMAX - e_buffer[1]
+            emin = e_buffer[0]
+            if np.any(e > emax) or np.any(e < emin):
+                raise ValueError(
+                    f"Interpolation: e out of bounds. Must be between {emin} and {emax} (for a < {AMAX})."
+                )
+            
+        elif a >= AMAX  and a <= AMAX_nex:
+            emax = EMAX_nex - e_buffer[1]
+            emin = e_buffer[0]
+            if np.any(e > emax) or np.any(e < emin):
+                raise ValueError(
+                    f"Interpolation: e out of bounds. Must be between {emin} and {emax} (for a > {AMAX_nex})."
+                )
+    
+
+    def isvalid_p(self, p, a , p_buffer=[0, 0]):
+
+        if a < AMAX:
+            pmax = PMAX - p_buffer[1]
+            pmin = PISCO_MIN + self.separatrix_buffer_dist + p_buffer[0]
+            if np.any(p > pmax) or np.any(p < pmin):
+                raise ValueError(
+                    f"Interpolation: p out of bounds. Must be between {pmin} and {pmax}."
+                )
+
+        elif a >= AMAX  and a <= AMAX_nex:
+            pmax = PMAX_nex - p_buffer[1]
+            pmin = PISCO_MIN_nex + self.separatrix_buffer_dist + p_buffer[0]
+            if np.any(p > pmax) or np.any(p < pmin):
+                raise ValueError(
+                    f"Interpolation: p out of bounds. For a > {AMAX}, p must be between {pmin} and {pmax}."
+                )
+
 
     def isvalid_a(self, a, a_buffer=[0, 0]):
-        amax = AMAX - a_buffer[1]
+        
+        amax = AMAX_nex - a_buffer[1]
         amin = -AMAX + a_buffer[0]
         if np.any(a > amax) or np.any(a < amin):
             raise ValueError(
@@ -513,13 +626,13 @@ class KerrEccEqFlux(ODEBase):
 
     def min_p(self, e=0, x=1, a=0):
         self.isvalid_x(x)
-        self.isvalid_e(e)
+        self.isvalid_e(e,a)
         self.isvalid_a(a)
         return self._min_p(e, x, a)
 
     def max_p(self, e=0, x=1, a=0):
         self.isvalid_x(x)
-        self.isvalid_e(e)
+        self.isvalid_e(e,a)
         self.isvalid_a(a)
         return self._max_p(e, x, a)
 
@@ -555,13 +668,13 @@ class KerrEccEqFlux(ODEBase):
 
     def min_e(self, p=20, x=1, a=0):
         self.isvalid_x(x)
-        self.isvalid_p(p)
+        self.isvalid_p(p,a)
         self.isvalid_a(a)
         return self._min_e(p, x, a)
 
     def max_e(self, p=20, x=1, a=0):
         self.isvalid_x(x)
-        self.isvalid_p(p)
+        self.isvalid_p(p,a)
         self.isvalid_a(a)
         return self._max_e(p, x, a)
 
@@ -569,35 +682,35 @@ class KerrEccEqFlux(ODEBase):
         return -AMAX
 
     def _max_a(self, p, e, x):
-        return AMAX
+        return AMAX_nex
 
     def min_a(self, p=20, e=0, x=1):
         self.isvalid_x(x)
-        self.isvalid_p(p)
-        self.isvalid_e(e)
+        self.isvalid_p(p,a)
+        self.isvalid_e(e,a)
         return self._min_a(p, e, x)
 
     def max_a(self, p=20, e=0, x=1):
         self.isvalid_x(x)
-        self.isvalid_p(p)
-        self.isvalid_e(e)
+        self.isvalid_p(p,a)
+        self.isvalid_e(e,a)
         return self._max_a(p, e, x)
 
     def bounds_a(self, p=20, e=0, x=1, a_buffer=[0, 0]):
         self.isvalid_x(x)
-        self.isvalid_p(p)
-        self.isvalid_e(e)
+        self.isvalid_p(p,a)
+        self.isvalid_e(e,a)
         return [self._min_a(p, e, x) + a_buffer[0], self._max_a(p, e, x) - a_buffer[1]]
 
     def bounds_p(self, e=0, x=1, a=0, p_buffer=[0, 0]):
         self.isvalid_x(x)
-        self.isvalid_e(e)
+        self.isvalid_e(e,a)
         self.isvalid_a(a)
         return [self._min_p(e, x, a) + p_buffer[0], self._max_p(e, x, a) - p_buffer[1]]
 
     def bounds_e(self, p=20, x=1, a=0, e_buffer=[0, 0]):
         self.isvalid_x(x)
-        self.isvalid_p(p)
+        self.isvalid_p(p,a)
         self.isvalid_a(a)
         return [self._min_e(p, x, a) + e_buffer[0], self._max_e(p, x, a) - e_buffer[1]]
 
@@ -605,7 +718,7 @@ class KerrEccEqFlux(ODEBase):
         self, p=20, e=0, x=1, a=0, p_buffer=[0, 0], e_buffer=[0, 0], a_buffer=[0, 0]
     ):
         self.isvalid_x(x)
-        self.isvalid_e(e, e_buffer=e_buffer)
+        self.isvalid_e(e,a, e_buffer=e_buffer)
         self.isvalid_a(a, a_buffer=a_buffer)
         pmin, pmax = self.bounds_p(e, x, a, p_buffer=p_buffer)
         assert p >= pmin and p <= pmax, (
@@ -648,7 +761,7 @@ class KerrEccEqFlux(ODEBase):
         else:
             a_in = a
 
-        u, w, _, z, in_region_A = _kerrecceq_flux_forward_map(a_in, p, e, 1.0, pLSO)
+        u, w, _, z, Region = _kerrecceq_flux_forward_map(a_in, p, e, 1.0, pLSO) 
 
         if u < edge_buffer or u > 1 - edge_buffer or np.isnan(u):
             raise ValueError("Interpolation: p out of bounds.")
@@ -665,12 +778,15 @@ class KerrEccEqFlux(ODEBase):
 
         if self.flux_output_convention == "ELQ":
             EdotPN, LdotPN = _PN_alt(p, e)
-            if in_region_A:
+            if Region == "RegionA":                                                       
                 Edot = -self.Edot_interp_A(u, w, z) * EdotPN
                 Ldot = -self.Ldot_interp_A(u, w, z) * LdotPN
-            else:
+            elif Region == "RegionB":
                 Edot = -self.Edot_interp_B(u, w, z) * EdotPN
                 Ldot = -self.Ldot_interp_B(u, w, z) * LdotPN
+            elif Region == "RegionC":
+                Edot = -self.Edot_interp_C(u, w, z) * EdotPN
+                Ldot = -self.Ldot_interp_C(u, w, z) * LdotPN
 
             if a_in < 0:
                 Ldot *= -1
@@ -682,12 +798,16 @@ class KerrEccEqFlux(ODEBase):
             p_sep = pLSO
             pdotPN = _pdot_PN(p, e, risco, p_sep)
             edotPN = _edot_PN(p, e, risco, p_sep)
-            if in_region_A:
+
+            if Region == "RegionA":                                                      
                 pdot = -self.pdot_interp_A(u, w, z) * pdotPN
                 edot = -self.edot_interp_A(u, w, z) * edotPN
-            else:
+            elif Region == "RegionB":
                 pdot = -self.pdot_interp_B(u, w, z) * pdotPN
                 edot = -self.edot_interp_B(u, w, z) * edotPN
+            elif Region == "RegionC":
+                pdot = -self.pdot_interp_C(u, w, z) * pdotPN
+                edot = -self.edot_interp_C(u, w, z) * edotPN
 
             return pdot, edot
 
