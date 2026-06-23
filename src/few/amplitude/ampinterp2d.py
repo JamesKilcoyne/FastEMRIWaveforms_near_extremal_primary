@@ -225,12 +225,16 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
         self.filename = (
             "ZNAmps_l10_m10_n55_DS2Outer.h5" if filename is None else filename
         )
+        self.near_extremal_filename = (
+            "ZNAmps_l10_m10_n55_DS2Outer_NEX.h5" if filename is None else filename
+        )
 
         from few import get_file_manager
 
         file_path = get_file_manager().get_file(self.filename)
+        file_path_nex = get_file_manager().get_file(self.filename)   # change filename to NEX datafilename
 
-        with h5py.File(file_path, "r") as f:
+        with h5py.File(file_path, "r") as f, h5py.File(file_path_nex, "r") as f_nex:
             regionA = f["regionA"]
             coeffsA = regionA["CoeffsRegionA"][()]
             w_knots = regionA["w_knots"][()]
@@ -286,21 +290,59 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
             except KeyError:
                 pass
 
+
+            try:
+                regionC = f_nex["regionC"]                   ##See what its actually called
+                coeffsC = regionB["CoeffsRegionC"][()]
+
+                w_knots = regionC["w_knots"][()]
+                u_knots = regionC["u_knots"][()]
+                z_knots = regionC["z_knots"][()]
+
+                z_knots = z_knots[::downsample_Z]
+
+                coeffsC = coeffsC[::downsample_Z]
+
+                self.spin_information_holder_C = [
+                    self.build_with_same_backend(
+                        AmpInterp2D,
+                        args=[
+                            w_knots,
+                            u_knots,
+                            coeffsC[i],
+                            self.l_arr,
+                            self.m_arr,
+                            self.n_arr,
+                        ],
+                    )
+                    for i in range(z_knots.size)
+                ]
+            except KeyError:
+                pass
+
         self.z_values = z_knots
 
-    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):
+    def evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
+
         z_out = self.xp.zeros(
-            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
+            (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
         )
+
+        region_A_mask, region_B_mask, region_C_mask = Region_masks
 
         if self.xp.any(region_A_mask):
             z_out[region_A_mask, :] = self.spin_information_holder_A[index](
                 w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
             )
 
-        if self.xp.any(~region_A_mask):
-            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
-                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
+        if self.xp.any(region_B_mask):
+            z_out[region_B_mask, :] = self.spin_information_holder_B[index](
+                w[region_B_mask], u[region_A_mask], mode_indexes=mode_indexes
+            )
+
+        if self.xp.any(region_C_mask):
+            z_out[region_C_mask, :] = self.spin_information_holder_C[index](
+                w[region_C_mask], u[region_C_mask], mode_indexes=mode_indexes  #Modify to include region C
             )
 
         return z_out
