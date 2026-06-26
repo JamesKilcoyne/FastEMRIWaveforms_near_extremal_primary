@@ -322,7 +322,7 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
 
         self.z_values = z_knots
 
-    def evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
+    def _evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
 
         z_out = self.xp.zeros(
             (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
