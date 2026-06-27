@@ -622,6 +622,118 @@ class KerrEccentricEquatorial(SphericalHarmonic):
             raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
 
         return a, xI
+    
+
+class KerrEccentricEquatorial_nex(SphericalHarmonic):
+    """
+    Kerr eccentric equatorial base class.
+
+    Args:
+        lmax: Maximum l value for the model. Default is 10.
+        nmax: Maximum n value for the model. Default is 55.
+    """
+
+    background: str = "Kerr"
+    """The spacetime background for this model."""
+
+    descriptor: str = "eccentric equatorial"
+    """Description of the inspiral trajectory properties for this model."""
+
+    frame: str = "source"
+    """Frame in which source is generated. Is source frame."""
+
+    needs_Y: bool = False
+    """If True, model expects inclination parameter Y (rather than xI)."""
+
+    def __init__(
+        self,
+        lmax: int = 10,    #WIll PROBABLY NEED TO CHANGE
+        nmax: int = 55,
+        force_backend: BackendLike = None,
+    ):
+        SphericalHarmonic.__init__(
+            self, lmax=lmax, nmax=nmax, force_backend=force_backend
+        )
+
+    @classmethod
+    def supported_backends(cls):
+        return cls.GPU_RECOMMENDED()
+
+    def sanity_check_init(
+        self, m1: float, m2: float, a: float, p0: float, e0: float, xI: float
+    ) -> tuple[float, float]:
+        r"""Sanity check initial parameters.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            m1: Massive black hole mass in solar masses.
+            m2: compact object mass in solar masses.
+            a: Dimensionless spin of massive black hole.
+            p0: Initial semilatus rectum (dimensionless)
+                :math:`(10\leq p_0\leq 16 + 2e_0)`. See the documentation for
+                more information on :math:`p_0 \leq 10.0`.
+            e0: Initial eccentricity :math:`(0\leq e_0\leq0.7)`.
+            xI: Initial cosine(inclination) :math:`(|x_I| = 1)`.
+
+        Returns:
+            (a_fix, xI_fix): a and xI in the correct convention (a >= 0).
+
+        Raises:
+            ValueError: If any of the parameters are not allowed.
+
+        """
+        # TODO: update function when grids replaced
+
+        for val, key in [[m1, "m1"], [p0, "p0"], [e0, "e0"], [m2, "m2"]]:
+            test = val < 0.0
+            if test:
+                raise ValueError("{} is negative. It must be positive.".format(key))
+
+        if m1 < m2:
+            raise ValueError(
+                "Massive black hole mass must be larger than the compact object mass. (m1={}, m2={})".format(
+                    m1, m2
+                )
+            )
+
+        if xI < 0:
+            # flip convention
+            get_logger().warning(
+                "Negative inclination detected. Flipping sign of a and xI to match convention."
+            )
+            a = -a
+            xI = -xI
+
+        if a > 1 - 10**(-12) or a < 0.999:
+            raise ValueError(
+                r"Larger black hole spin magnitude below 0.999, or above $1 - 10^{-12}$ is outside of our domain of validity."
+            )
+
+        # transform parameters and check they are within bounds
+        a_sign = a * xI
+        xI_in = abs(xI)
+        grid_coords = kerrecceq_forward_map(a_sign, p0, e0, xI_in)
+
+        if np.isnan(grid_coords[0]):
+            raise ValueError(
+                f"This value of p0 ({p0}) is too close to the separatrix for our model."
+            )
+        elif grid_coords[0] > 1.000001:
+            raise ValueError(
+                f"This value of p0 ({p0}) is outside of our domain of validity."
+            )
+        if grid_coords[1] < -1e-6 or grid_coords[1] > 1.000001:
+            raise ValueError(
+                f"This a ({a}), p0 ({p0}) and e0 ({e0}) combination is outside of our domain of validity."
+            )
+
+        if abs(xI) != 1.0:
+            raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
+
+        return a, xI
+
+
 
 class KerrGeneric(SphericalHarmonic):
     """
