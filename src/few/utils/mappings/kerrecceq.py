@@ -26,6 +26,16 @@ AMIN_REGIONB = -AMAX_REGIONB
 EMAX_REGIONB = 0.9
 DELTAPMIN_REGIONB = 9
 
+#Parameters for region C (near-extremal region)
+
+DELTAPMIN_REGIONC = DELTAPMIN                   ## may change
+DELTAPMAX_REGIONC = 4 +  DELTAPMIN_REGIONC
+PMAX_REGIONC = 10 
+
+AMAX_nex = 1- 1e-12
+AMIN_nex = AMAX
+EMAX_nex = 0.4
+
 
 def kerrecceq_legacy_p_to_u(a, p, e, xI, use_gpu=False):
     """Convert from separation :math:`p` to :math:`y` coordinate
@@ -79,9 +89,14 @@ def _kerrecceq_flux_forward_map(
     """
     A jit-compiled forward mapping for the flux grids, optimised for fast ODE evaluations.
     """
-    if p <= pLSO + DELTAPMAX:
-        return *_uwyz_of_apex_kernel(a, p, e, xI, pLSO, ALPHA_FLUX, BETA_FLUX), True
-    else:
+
+    near = (AMIN <= a ) & (a <= AMAX) & (p <= pLSO + DELTAPMAX)
+    far = (AMIN <= a) & (a <= AMAX) & ( p > pLSO + DELTAPMAX)
+    near_extremal = (AMAX < a ) & (a <= AMAX_nex) & (pLSO + DELTAPMIN_REGIONC  <= p ) & (p <= PMAX_REGIONC)
+    
+    if near:
+        return *_uwyz_of_apex_kernel(a, p, e, xI, pLSO, ALPHA_FLUX, BETA_FLUX), "RegionA"
+    elif far:
         return *_UWYZ_of_apex_kernel(
             a,
             p,
@@ -89,7 +104,12 @@ def _kerrecceq_flux_forward_map(
             xI,
             pLSO,
             True,
-        ), False
+        ), "RegionB"
+
+    elif near_extremal:
+        return *_uwyz_of_apex_kernel_nex(a, p, e, xI, pLSO, ALPHA_FLUX, BETA_FLUX), "RegionC"
+
+
 
 
 def kerrecceq_forward_map(
@@ -159,7 +179,12 @@ def kerrecceq_forward_map(
     pLSO = get_separatrix(a_sep_in, e, xI_sep_in)
 
     # handle regions A and B
-    near = p <= pLSO + DELTAPMAX
+
+    near = (p <= pLSO + DELTAPMAX) & (a<= AMAX)
+    far = (p> pLSO+DELTAPMAX) & (p<=PMAX_REGIONB)
+    near_extremal = (p <= pLSO + DELTAPMAX)  & (a>AMAX)
+
+
     if xp.any(near):
         out = _uwyz_of_apex_kernel(
             a[near], p[near], e[near], xI[near], pLSO[near], alpha, beta
@@ -169,7 +194,6 @@ def kerrecceq_forward_map(
         y[near] = out[2]
         z[near] = out[3]
 
-    far = np.bitwise_not(near)
     if xp.any(far):
         out = _UWYZ_of_apex_kernel(a[far], p[far], e[far], xI[far], pLSO[far], is_flux)
         u[far] = out[0]
@@ -177,8 +201,16 @@ def kerrecceq_forward_map(
         y[far] = out[2]
         z[far] = out[3]
 
+
+    if xp.any(near_extremal):
+        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal], is_flux,False) 
+        u[near_extremal] = out[0]
+        w[near_extremal] = out[1]
+        y[near_extremal] = out[2]
+        z[near_extremal] = out[3]
+
     if return_mask:
-        return u, w, y, z, near
+        return u, w, y, z, [near, far, near_extremal]
     else:
         return u, w, y, z
 
@@ -188,7 +220,7 @@ def kerrecceq_backward_map(
     w: Union[float, np.ndarray],
     y: Union[float, np.ndarray],
     z: Union[float, np.ndarray],
-    regionA: bool = True,
+    Region: str = "RegionA",
     kind: str = "flux",
 ):
     """
@@ -229,10 +261,12 @@ def kerrecceq_backward_map(
 
     # if scalar directly evaluate the kernel for speed
     if not hasattr(u, "__len__"):
-        if regionA:
+        if Region == "RegionA":
             return apex_of_uwyz(u, w, y, z, alpha=alpha, beta=beta)
-        else:
+        elif Region == "RegionB":
             return apex_of_UWYZ(u, w, y, z, is_flux)
+        elif Region == "RegionC":
+            return apex_of_uwyz(u, w, y, z, is_flux)
 
     # else, we have multiple points
     u = xp.atleast_1d(xp.asarray(u))
@@ -241,9 +275,12 @@ def kerrecceq_backward_map(
     z = xp.atleast_1d(xp.asarray(z))
 
     if regionA:
-        return apex_of_uwyz(u, w, y, z, alpha=alpha, beta=beta)
-    else:
-        return apex_of_UWYZ(u, w, y, z, is_flux)
+        if Region == "RegionA":
+            return apex_of_uwyz(u, w, y, z, alpha=alpha, beta=beta)
+        elif Region == "RegionB":
+            return apex_of_UWYZ(u, w, y, z, is_flux)
+        elif Region == "RegionC":
+            return apex_of_uwyz_nex(u, w, y, z, is_flux)
 
 
 @njit
@@ -534,4 +571,140 @@ def apex_of_UWYZ(
         p = p_of_U_flux(u, pLSO)
     else:
         p = p_of_U_amplitude(u, pLSO)
+    return a, p, e, x
+
+
+   # # RegionC
+#Keep (p,u) the same (different bounds), change (a,z), keep (x,y),  alter (e,w)
+
+
+
+#(p,u)
+@njit
+def u_of_p_nex(p, pLSO, alpha):
+    check_term = (
+        np.log(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - log(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
+    ) / log(2)
+    sgn = np.sign(check_term)
+    return sgn * (sgn * check_term) ** alpha
+
+
+@njit
+def u_of_p_flux_nex(p, pLSO):
+    check_term = (
+        np.log(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - log(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
+    ) / log(2)
+    if check_term < 0:
+        return -((-check_term) ** ALPHA_FLUX)
+    else:
+        return check_term**ALPHA_FLUX
+    
+
+
+@njit
+def p_of_u_nex(u, pLSO, alpha):
+    return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
+        np.exp(u ** (1 / alpha) * log(2)) - 1
+    )
+
+
+@njit
+def p_of_u_flux_nex(u, pLSO):
+    return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
+        np.exp(u ** (1 / ALPHA_FLUX) * log(2)) - 1
+    )
+
+
+#(a,z)
+
+@njit
+def chi_of_a_nex(a):
+    return np.log10(1-a)
+
+@njit
+def z_of_a_nex(a):
+    chimax = chi_of_a_nex(AMIN_nex)
+    chimin = chi_of_a_nex(AMAX_nex)
+    return (chi_of_a_nex(a) - chimin) / (chimax - chimin)
+
+
+@njit
+def a_of_chi_nex(chi):
+    return 1 - 10**(chi)
+
+
+@njit
+def a_of_z_nex(z):
+    chimax = chi_of_a_nex(AMIN)
+    chimin = chi_of_a_nex(AMAX)
+    return a_of_chi_nex(chimin + z * (chimax - chimin))
+
+
+#(e,w)
+
+@njit
+def Secc_of_uz_nex(
+    u,
+    z,
+    beta,
+):
+    check_part = z + u**beta * (1 - z)
+    sgn = np.sign(check_part)
+    return ESEP + (EMAX_nex - ESEP) * sgn * np.sqrt(sgn * check_part)
+
+
+@njit
+def w_of_euz_nex(e, u, z, beta):
+    return e / Secc_of_uz_nex(u, z, beta)
+
+
+@njit
+def w_of_euz_flux_nex(e, u, z):
+    return e / Secc_of_uz_nex(u, z, BETA_FLUX)
+
+
+
+
+
+
+@njit
+def _uwyz_of_apex_kernel_nex(
+    a,
+    p,
+    e,
+    x,
+    pLSO,
+    alpha,
+    beta,
+):
+    u = u_of_p_nex(p, pLSO, alpha)
+    y = y_of_x(x)
+    z = z_of_a_nex(a)
+    w = w_of_euz_nex(e, u, z, beta)
+    return u, w, y, z
+
+
+def apex_of_uwyz_nex(
+    u,
+    w,
+    y,
+    z,
+    alpha=ALPHA_FLUX,
+    beta=BETA_FLUX,
+):
+    a = a_of_z_nex(z)
+    x = x_of_y(y)
+    e = e_of_uwz_nex(
+        u,
+        w,
+        z,
+        beta,
+    )
+    a = np.asarray(a)
+    a_in = np.abs(a)
+    x_in = np.sign(a)
+    x_in[x_in == 0] = 1
+
+    pLSO = get_separatrix(a_in, e, x_in)
+    p = p_of_u_nex(u, pLSO, alpha)
     return a, p, e, x
