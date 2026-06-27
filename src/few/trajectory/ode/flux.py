@@ -802,3 +802,382 @@ class KerrEccEqFluxLegacy(ODEBase):
         pdot, edot = self.interpolate_flux_grids(p, e, x)
 
         return [pdot, edot, 0.0, Omega_phi, Omega_theta, Omega_r]
+
+
+
+
+class KerrEccEqFlux_nex(ODEBase):
+    """
+    Kerr eccentric equatorial flux ODE.
+
+    Args:
+        use_ELQ: If True, the ODE will output derivatives of the orbital elements of (E, L, Q). Defaults to False.
+        downsample: List of two 3-tuples of integers to downsample the flux grid in u, w, z. The first list element
+        refers to the inner grid, the second to the outer. Useful for testing error convergence. Defaults to None (no downsampling).
+    """
+
+    def __init__(
+        self,
+        *args,
+        use_ELQ: bool = False,
+        downsample=None,
+        flux_output_convention="pex",
+        **kwargs,
+    ):
+        super().__init__(*args, use_ELQ=use_ELQ, downsample=downsample, **kwargs)
+
+        self.flux_output_convention = flux_output_convention
+
+        fp = "KerrEccEqFluxData.h5"  #Will change filename
+
+        if downsample is None:
+            downsample = [(1, 1, 1), (1, 1, 1)]
+
+        downsample_inner = downsample[0]
+        downsample_outer = downsample[1]
+
+        fm = get_file_manager()
+        file_path = fm.get_file(fp)
+
+        with h5py.File(file_path, "r") as fluxData:
+            regionA = fluxData["regionA"]
+            u = np.linspace(0, 1, regionA.attrs["NU"])[:: downsample_inner[0]]
+            w = np.linspace(0, 1, regionA.attrs["NW"])[:: downsample_inner[1]]
+            z = np.linspace(0, 1, regionA.attrs["NZ"])[:: downsample_inner[2]]
+
+            ugrid, wgrid, zgrid = np.asarray(
+                np.meshgrid(u, w, z, indexing="ij")
+            ).reshape(3, -1)
+            agrid, pgrid, egrid, xgrid = apex_of_uwyz(
+                ugrid, wgrid, np.ones_like(zgrid), zgrid
+            )
+
+            # normalise by PN contribution
+            Edot = regionA["Edot"][()][
+                :: downsample_inner[0],
+                :: downsample_inner[1],
+                :: downsample_inner[2],
+            ]
+            Ldot = regionA["Ldot"][()][
+                :: downsample_inner[0],
+                :: downsample_inner[1],
+                :: downsample_inner[2],
+            ]
+
+            if flux_output_convention == "pex":
+                # calculate pdot and edot from Edot and Ldot
+                Edothere = (Edot).flatten()
+                Ldothere = (Ldot).flatten()
+                xgrid = np.sign(agrid)
+                xgrid[xgrid == 0] = 1
+
+                Ldothere = Ldothere * xgrid
+                agrid = np.abs(agrid)
+
+                out_pdot_edot = np.asarray(
+                    [
+                        ELdot_to_PEdot_Jacobian(
+                            agrid[i],
+                            pgrid[i],
+                            egrid[i],
+                            xgrid[i],
+                            Edothere[i],
+                            Ldothere[i],
+                        )
+                        for i in range(Edothere.size)
+                    ]
+                )
+
+                # check whether there are no nans in the output and Edot and Ldot
+                if (
+                    np.isnan(out_pdot_edot).any()
+                    or np.isnan(Edot).any()
+                    or np.isnan(Ldot).any()
+                ):
+                    raise ValueError("Interpolation: nans in pdot, edot or Edot, Ldot.")
+
+                pdot = out_pdot_edot[:, 0].reshape(u.size, w.size, z.size)
+                edot = out_pdot_edot[:, 1].reshape(u.size, w.size, z.size)
+
+                risco = get_separatrix(
+                    agrid.flatten(), np.zeros_like(agrid.flatten()), xgrid.flatten()
+                )
+                psep = get_separatrix(agrid.flatten(), egrid.flatten(), xgrid.flatten())
+                pdot_pn = _pdot_PN(
+                    pgrid.flatten(), egrid.flatten(), risco, psep
+                ).reshape(u.size, w.size, z.size)
+                edot_pn = _edot_PN(
+                    pgrid.flatten(), egrid.flatten(), risco, psep
+                ).reshape(u.size, w.size, z.size)
+
+                self.pdot_interp_A = TricubicSpline(u, w, z, pdot / pdot_pn)
+                self.edot_interp_A = TricubicSpline(u, w, z, edot / edot_pn)
+
+            else:
+                EdotPN, LdotPN = _PN_alt(pgrid, egrid)
+                EdotPN = EdotPN.reshape(u.size, w.size, z.size)
+                LdotPN = LdotPN.reshape(u.size, w.size, z.size)
+
+                self.Edot_interp_A = TricubicSpline(u, w, z, Edot / EdotPN)
+                self.Ldot_interp_A = TricubicSpline(u, w, z, Ldot / LdotPN)
+
+
+#Need to change these validity checking functions:
+
+    @property
+    def equatorial(self):
+        return True
+
+    @property
+    def separatrix_buffer_dist(self):
+        return 2 * DELTAPMIN
+
+    @property
+    def separatrix_buffer_dist_grid(self):
+        return DELTAPMIN
+
+    @property
+    def supports_ELQ(self):
+        return True
+
+    def isvalid_x(self, x):
+        if np.any(np.abs(x) != 1):
+            raise ValueError("Interpolation: x out of bounds. Must be either 1 or -1.")
+
+    def isvalid_e(self, e, e_buffer=[0, 0]):
+        emax = EMAX - e_buffer[1]
+        emin = e_buffer[0]
+        if np.any(e > emax) or np.any(e < emin):
+            raise ValueError(
+                f"Interpolation: e out of bounds. Must be between {emin} and {emax}."
+            )
+
+    def isvalid_p(self, p, p_buffer=[0, 0]):
+        pmax = PMAX - p_buffer[1]
+        pmin = PISCO_MIN + self.separatrix_buffer_dist + p_buffer[0]
+        if np.any(p > pmax) or np.any(p < pmin):
+            raise ValueError(
+                f"Interpolation: p out of bounds. Must be between {pmin} and {pmax}."
+            )
+
+    def isvalid_a(self, a, a_buffer=[0, 0]):
+        amax = AMAX - a_buffer[1]
+        amin = -AMAX + a_buffer[0]
+        if np.any(a > amax) or np.any(a < amin):
+            raise ValueError(
+                f"Interpolation: a out of bounds. Must be between {amin} and {amax}."
+            )
+
+    def _min_p(self, e, x, a):
+        if x == -1:
+            a_in = -a
+        else:
+            a_in = a
+
+        z = z_of_a(a_in)
+        p_sep = _get_separatrix_kernel_inner(a, e, x)
+
+        if w_of_euz_flux(e, 0.0, z) > 1:
+            u_min = u_where_w_is_unity(e, z, kind="flux")
+        else:
+            u_min = 0.0
+
+        return max(p_of_u_flux(u_min, p_sep), p_sep + self.separatrix_buffer_dist)
+
+    def _max_p(self, e, x, a):
+        return PMAX
+
+    def min_p(self, e=0, x=1, a=0):
+        self.isvalid_x(x)
+        self.isvalid_e(e)
+        self.isvalid_a(a)
+        return self._min_p(e, x, a)
+
+    def max_p(self, e=0, x=1, a=0):
+        self.isvalid_x(x)
+        self.isvalid_e(e)
+        self.isvalid_a(a)
+        return self._max_p(e, x, a)
+
+    def _min_e(self, p, x, a):
+        return 0.0
+
+    def _max_e(self, p, x, a):
+        if x == -1:
+            a_in = -a
+        else:
+            a_in = a
+
+        p_sep_min_buffer = get_separatrix(a_in, 0, 1) + self.separatrix_buffer_dist
+        if p < p_sep_min_buffer:
+            raise ValueError(
+                f"Interpolation: p out of bounds. Must be greater than innermost stable circular orbit + buffer = {p_sep_min_buffer}."
+            )
+
+        p_min = self._min_p(EMAX, x, a)
+        if p > p_min:
+            emax = EMAX
+        else:
+            tol = 1e-13
+            z = z_of_a(a_in)
+            emax = _brentq_jit(_emax_w, 0, EMAX, (a_in, p, z), tol)
+
+            # if you lie below the separatrix, then you are limited by the max e-value on the separatrix
+            if get_separatrix(a_in, emax, 1) > p:
+                emax = _brentq_jit(
+                    _emax_sep, 0, emax, (a_in, p - self.separatrix_buffer_dist), tol
+                )
+        return emax
+
+    def min_e(self, p=20, x=1, a=0):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_a(a)
+        return self._min_e(p, x, a)
+
+    def max_e(self, p=20, x=1, a=0):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_a(a)
+        return self._max_e(p, x, a)
+
+    def _min_a(self, p, e, x):
+        return -AMAX
+
+    def _max_a(self, p, e, x):
+        return AMAX
+
+    def min_a(self, p=20, e=0, x=1):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_e(e)
+        return self._min_a(p, e, x)
+
+    def max_a(self, p=20, e=0, x=1):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_e(e)
+        return self._max_a(p, e, x)
+
+    def bounds_a(self, p=20, e=0, x=1, a_buffer=[0, 0]):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_e(e)
+        return [self._min_a(p, e, x) + a_buffer[0], self._max_a(p, e, x) - a_buffer[1]]
+
+    def bounds_p(self, e=0, x=1, a=0, p_buffer=[0, 0]):
+        self.isvalid_x(x)
+        self.isvalid_e(e)
+        self.isvalid_a(a)
+        return [self._min_p(e, x, a) + p_buffer[0], self._max_p(e, x, a) - p_buffer[1]]
+
+    def bounds_e(self, p=20, x=1, a=0, e_buffer=[0, 0]):
+        self.isvalid_x(x)
+        self.isvalid_p(p)
+        self.isvalid_a(a)
+        return [self._min_e(p, x, a) + e_buffer[0], self._max_e(p, x, a) - e_buffer[1]]
+
+    def isvalid_pex(
+        self, p=20, e=0, x=1, a=0, p_buffer=[0, 0], e_buffer=[0, 0], a_buffer=[0, 0]
+    ):
+        self.isvalid_x(x)
+        self.isvalid_e(e, e_buffer=e_buffer)
+        self.isvalid_a(a, a_buffer=a_buffer)
+        pmin, pmax = self.bounds_p(e, x, a, p_buffer=p_buffer)
+        assert p >= pmin and p <= pmax, (
+            f"Interpolation: p {p} out of bounds. Must be between {pmin} and {pmax}."
+        )
+
+    def distance_to_outer_boundary(self, y):
+        p, e, x = self.get_pex(y)
+
+        e_max = self._max_e(p, x, self.a)
+
+        # Subtract a small value to avoid numerical issues at the boundary
+        dist_p = (PMAX - 1e-9) - p
+        dist_e = (e_max - 1e-9) - e
+
+        if dist_p < 0 or dist_e < 0:
+            mult = -1
+        else:
+            mult = 1
+
+        dist = mult * min(abs(dist_p), abs(dist_e))
+        return dist
+
+    def interpolate_flux_grids(
+        self,
+        p: float,
+        e: float,
+        x: float = 1,
+        a: float = 0,
+        pLSO: Optional[float] = None,
+    ) -> tuple[float]:
+        if pLSO is None:
+            pLSO = get_separatrix(a, e, x)
+
+        edge_buffer = -1e-8
+
+        # handle xI = -1 case
+        if x == -1:
+            a_in = -a
+        else:
+            a_in = a
+
+        u, w, _, z, in_region_A = _kerrecceq_flux_forward_map(a_in, p, e, 1.0, pLSO)
+
+        if u < edge_buffer or u > 1 - edge_buffer or np.isnan(u):
+            raise ValueError("Interpolation: p out of bounds.")
+        if w < edge_buffer:
+            raise TrajectoryOffGridException("Interpolation: e out of bounds.")
+        if w > 1 - edge_buffer:
+            if self.integrate_backwards:
+                raise ValueError("Interpolation: e out of bounds.")
+            else:
+                raise TrajectoryOffGridException("Interpolation: e out of bounds.")
+
+        if z < edge_buffer or z > 1 - edge_buffer:
+            raise TrajectoryOffGridException("Interpolation: a out of bounds.")
+
+        if self.flux_output_convention == "ELQ":
+            EdotPN, LdotPN = _PN_alt(p, e)
+            if in_region_A:
+                Edot = -self.Edot_interp_A(u, w, z) * EdotPN
+                Ldot = -self.Ldot_interp_A(u, w, z) * LdotPN
+            else:
+                raise ValueError("Make sure you are in the right region of paramter space")
+
+            if a_in < 0:
+                Ldot *= -1
+
+            return Edot, Ldot
+
+        else:
+            risco = get_separatrix(a_in, 0.0, 1.0)
+            p_sep = pLSO
+            pdotPN = _pdot_PN(p, e, risco, p_sep)
+            edotPN = _edot_PN(p, e, risco, p_sep)
+            if in_region_A:
+                pdot = -self.pdot_interp_A(u, w, z) * pdotPN
+                edot = -self.edot_interp_A(u, w, z) * edotPN
+            else:
+                pass
+
+            return pdot, edot
+
+    def evaluate_rhs(
+        self, y: Union[list[float], np.ndarray]
+    ) -> list[Union[float, np.ndarray]]:
+        if self.use_ELQ:
+            E, L, Q = y[:3]
+            p, e, x = ELQ_to_pex(self.a, E, L, Q)
+        else:
+            p, e, x = y[:3]
+
+        Omega_phi, Omega_theta, Omega_r = get_fundamental_frequencies(self.a, p, e, x)
+
+        Edot, Ldot = self.interpolate_flux_grids(
+            p, e, x, a=self.a, pLSO=self.p_sep_cache
+        )
+
+        return [Edot, Ldot, 0.0, Omega_phi, Omega_theta, Omega_r]
