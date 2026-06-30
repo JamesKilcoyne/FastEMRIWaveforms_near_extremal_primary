@@ -18,6 +18,7 @@ from ..utils.baseclasses import (
     ParallelModuleBase,
     SchwarzschildEccentric,
     KerrGeneric,
+    KerrEccentricEquatorial_nex,
     xp_ndarray,
 )
 from ..utils.citations import REFERENCE
@@ -288,19 +289,22 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
 
         self.z_values = z_knots
 
-    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):
+    def _evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
+
         z_out = self.xp.zeros(
-            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
+            (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
         )
+
+        region_A_mask, region_B_mask, region_C_mask = Region_masks
 
         if self.xp.any(region_A_mask):
             z_out[region_A_mask, :] = self.spin_information_holder_A[index](
                 w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
             )
 
-        if self.xp.any(~region_A_mask):
-            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
-                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
+        if self.xp.any(region_B_mask):
+            z_out[region_B_mask, :] = self.spin_information_holder_B[index](
+                w[region_B_mask], u[region_A_mask], mode_indexes=mode_indexes
             )
 
         return z_out
@@ -459,7 +463,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
             z_knots = z_knots[::downsample_Z]
             coeffsA = coeffsA[::downsample_Z]
 
-            self.spin_information_holder_A = [
+            self.spin_information_holder_C = [
                 self.build_with_same_backend(
                     AmpInterp2D,
                     args=[
@@ -478,14 +482,18 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
 
         self.z_values = z_knots
 
-    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):  #Keep Region A as the only region of the paramter space
+    def _evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
+
         z_out = self.xp.zeros(
-            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
+            (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
         )
 
-        if self.xp.any(region_A_mask):
-            z_out[region_A_mask, :] = self.spin_information_holder_A[index](
-                w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
+        region_A_mask, region_B_mask, region_C_mask = Region_masks
+
+
+        if self.xp.any(region_C_mask):
+            z_out[region_C_mask, :] = self.spin_information_holder_C[index](
+                w[region_C_mask], u[region_C_mask], mode_indexes=mode_indexes  #Modify to include region C
             )
 
         return z_out

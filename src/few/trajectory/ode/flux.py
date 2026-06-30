@@ -28,6 +28,10 @@ from ...utils.mappings.kerrecceq import (
     u_where_w_is_unity,
     w_of_euz_flux,
     z_of_a,
+
+    AMAX_nex,
+    EMAX_nex,
+    PMAX_REGIONC
 )
 from ...utils.utility import _brentq_jit
 from .base import ODEBase
@@ -38,6 +42,10 @@ PISCO_MIN = get_separatrix(AMAX, 0, 1)
 PISCO_MIN_SCHW = get_separatrix(0, 0, 1) + 1e-5
 PMAX_SCHW = 47.6
 EMAX_SCHW = 0.755
+
+
+#New paramters for NEX:
+PMAX_nex = PMAX_REGIONC
 
 
 @njit
@@ -945,7 +953,7 @@ class KerrEccEqFlux_nex(ODEBase):
             raise ValueError("Interpolation: x out of bounds. Must be either 1 or -1.")
 
     def isvalid_e(self, e, e_buffer=[0, 0]):
-        emax = EMAX - e_buffer[1]
+        emax = EMAX_nex - e_buffer[1]
         emin = e_buffer[0]
         if np.any(e > emax) or np.any(e < emin):
             raise ValueError(
@@ -953,7 +961,7 @@ class KerrEccEqFlux_nex(ODEBase):
             )
 
     def isvalid_p(self, p, p_buffer=[0, 0]):
-        pmax = PMAX - p_buffer[1]
+        pmax = PMAX_nex - p_buffer[1]
         pmin = PISCO_MIN + self.separatrix_buffer_dist + p_buffer[0]
         if np.any(p > pmax) or np.any(p < pmin):
             raise ValueError(
@@ -961,7 +969,7 @@ class KerrEccEqFlux_nex(ODEBase):
             )
 
     def isvalid_a(self, a, a_buffer=[0, 0]):
-        amax = AMAX - a_buffer[1]
+        amax = AMAX_nex - a_buffer[1]
         amin = -AMAX + a_buffer[0]
         if np.any(a > amax) or np.any(a < amin):
             raise ValueError(
