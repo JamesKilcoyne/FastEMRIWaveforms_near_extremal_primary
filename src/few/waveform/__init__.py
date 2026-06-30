@@ -5,6 +5,7 @@ generation interface `GenerateEMRIWaveform`.
 
 from .waveform import (
     FastKerrEccentricEquatorialFlux,
+    FastKerrEccentricEquatorialFlux_nex,
     FastSchwarzschildEccentricFlux,
     FastSchwarzschildEccentricFluxBicubic,
     GenerateEMRIWaveform,
@@ -19,4 +20,5 @@ __all__ = [
     "FastSchwarzschildEccentricFluxBicubic",
     "SlowSchwarzschildEccentricFlux",
     "Pn5AAKWaveform",
+    "FastKerrEccentricEquatorialFlux_nex"
 ]

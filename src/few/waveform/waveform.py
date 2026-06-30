@@ -5,18 +5,19 @@ from typing import Generic, Optional, Union
 
 import numpy as np
 
-from ..amplitude.ampinterp2d import AmpInterpKerrEccEq, AmpInterpSchwarzEcc
+from ..amplitude.ampinterp2d import AmpInterpKerrEccEq, AmpInterpSchwarzEcc, AmpInterpKerrEccEq_nex
 from ..amplitude.romannet import RomanAmplitude
 from ..summation.aakwave import AAKSummation
 from ..summation.directmodesum import DirectModeSum
 from ..summation.fdinterp import FDInterpolatedModeSum
 from ..summation.interpolatedmodesum import InterpolatedModeSum
 from ..trajectory.inspiral import EMRIInspiral
-from ..trajectory.ode import PN5, KerrEccEqFlux, SchwarzEccFlux
+from ..trajectory.ode import PN5, KerrEccEqFlux, SchwarzEccFlux, KerrEccEqFlux_nex
 from ..utils.baseclasses import (
     BackendLike,
     KerrEccentricEquatorial,
     SchwarzschildEccentric,
+    KerrEccentricEquatorial_nex
 )
 from ..utils.constants import MRSUN_SI, Gpc
 from ..utils.mappings.pn import xI_to_Y
@@ -134,6 +135,7 @@ class GenerateEMRIWaveform(Generic[WaveformModule]):
             "SlowSchwarzschildEccentricFlux": SlowSchwarzschildEccentricFlux,
             "FastKerrEccentricEquatorialFlux": FastKerrEccentricEquatorialFlux,
             "Pn5AAKWaveform": Pn5AAKWaveform,
+            "FastKerrEccentricEquatorialFlux_nex": FastKerrEccentricEquatorialFlux_nex,
         }
 
     @property
@@ -508,6 +510,153 @@ class FastKerrEccentricEquatorialFlux(
             *args,
             **kwargs,
         )
+
+class FastKerrEccentricEquatorialFlux_nex(
+    SphericalHarmonicWaveformBase, KerrEccentricEquatorial_nex
+):
+    """Prebuilt model for fast Kerr eccentric equatorial, dedicated near extremal, flux-based waveforms.
+
+    This model combines the most efficient modules to produce the fastest
+    accurate EMRI waveforms. It leverages GPU hardware for maximal acceleration,
+    but is also available on for CPUs.
+
+    The trajectory module used here is :class:`few.trajectory.inspiral` for a
+    flux-based, sparse trajectory. This returns approximately 100 points.
+
+    The amplitudes are then determined with
+    :class:`few.amplitude.ampinterp2d.AmpInterp2D` along these sparse
+    trajectories. This gives complex amplitudes for all modes in this model at
+    each point in the trajectory. These are then filtered with
+    :class:`few.utils.modeselector.ModeSelector`.
+
+    The modes that make it through the filter are then summed by
+    :class:`few.summation.interpolatedmodesum.InterpolatedModeSum`.
+
+    See :class:`few.waveform.base.SphericalHarmonicWaveformBase` for information
+    on inputs. See examples as well.
+
+    args:
+        inspiral_kwargs : Optional kwargs to pass to the
+            inspiral generator. **Important Note**: These kwargs are passed
+            online, not during instantiation like other kwargs here. Default is
+            {}.
+        amplitude_kwargs: Optional kwargs to pass to the
+            amplitude generator during instantiation. Default is {}.
+        sum_kwargs: Optional kwargs to pass to the
+            sum module during instantiation. Default is {}.
+        Ylm_kwargs: Optional kwargs to pass to the
+            Ylm generator during instantiation. Default is {}.
+        *args: args for waveform model.
+        **kwargs: kwargs for waveform model.
+
+    """
+
+    def __init__(
+        self,
+        /,
+        inspiral_kwargs: Optional[dict] = None,
+        amplitude_kwargs: Optional[dict] = None,
+        sum_kwargs: Optional[dict] = None,
+        Ylm_kwargs: Optional[dict] = None,
+        mode_selector_kwargs: Optional[dict] = None,
+        force_backend: BackendLike = None,
+        **kwargs: dict,
+    ):
+        if inspiral_kwargs is None:
+            inspiral_kwargs = {}
+
+        if "func" not in inspiral_kwargs.keys():
+            inspiral_kwargs["func"] = KerrEccEqFlux_nex
+
+        # inspiral_kwargs = augment_ODE_func_name(inspiral_kwargs)
+
+        if sum_kwargs is None:
+            sum_kwargs = {}
+        mode_summation_module = InterpolatedModeSum
+        if "output_type" in sum_kwargs:
+            if sum_kwargs["output_type"] == "fd":
+                mode_summation_module = FDInterpolatedModeSum
+
+        if mode_selector_kwargs is None:
+            mode_selector_kwargs = {}
+        mode_selection_module = ModeSelector
+
+        KerrEccentricEquatorial_nex.__init__(
+            self,
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key in ["lmax", "nmax", "ndim"]
+            },
+            force_backend=force_backend,
+        )
+        SphericalHarmonicWaveformBase.__init__(
+            self,
+            inspiral_module=EMRIInspiral,
+            amplitude_module=AmpInterpKerrEccEq_nex,
+            sum_module=mode_summation_module,
+            mode_selector_module=mode_selection_module,
+            inspiral_kwargs=inspiral_kwargs,
+            amplitude_kwargs=amplitude_kwargs,
+            sum_kwargs=sum_kwargs,
+            Ylm_kwargs=Ylm_kwargs,
+            mode_selector_kwargs=mode_selector_kwargs,
+            force_backend=force_backend,
+        )
+
+    @classmethod
+    def supported_backends(cls):
+        return cls.GPU_RECOMMENDED()
+
+    @property
+    def allow_batching(self):
+        return False
+
+    def __call__(
+        self,
+        m1: float,
+        m2: float,
+        a: float,
+        p0: float,
+        e0: float,
+        xI: float,
+        theta: float,
+        phi: float,
+        *args: Optional[tuple],
+        **kwargs: Optional[dict],
+    ) -> np.ndarray:
+        """
+        Generate the waveform.
+
+        Args:
+            m1: Mass of larger black hole in solar masses.
+            m2: Mass of compact object in solar masses.
+            a: Dimensionless spin of massive black hole.
+            p0: Initial semilatus rectum of inspiral trajectory.
+            e0: Initial eccentricity of inspiral trajectory.
+            xI: Initial cosine of the inclination angle.
+            theta: Polar angle of observer.
+            phi: Azimuthal angle of observer.
+            *args: Placeholder for additional arguments.
+            **kwargs: Placeholder for additional keyword arguments.
+
+        Returns:
+            Complex array containing generated waveform.
+
+        """
+        return self._generate_waveform(
+            m1,
+            m2,
+            a,
+            p0,
+            e0,
+            xI,
+            theta,
+            phi,
+            *args,
+            **kwargs,
+        )
+
 
 
 class FastSchwarzschildEccentricFlux(
