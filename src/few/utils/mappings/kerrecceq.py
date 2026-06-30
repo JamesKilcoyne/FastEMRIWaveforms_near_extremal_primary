@@ -29,12 +29,12 @@ DELTAPMIN_REGIONB = 9
 #Parameters for region C (near-extremal region)
 
 DELTAPMIN_REGIONC = DELTAPMIN                   ## may change
-DELTAPMAX_REGIONC = 4 +  DELTAPMIN_REGIONC
-PMAX_REGIONC = 10 
+DELTAPMAX_REGIONC = DELTAPMAX
+PMAX_REGIONC = DELTAPMAX_REGIONC
 
-AMAX_nex = 1- 1e-12
-AMIN_nex = AMAX
-EMAX_nex = 0.4
+AMAX_nex =  1-10**(-12)# AMAX   # 1-10**(-12)
+AMIN_nex = AMAX  # AMAX  
+EMAX_nex = EMAX   # 0.4
 
 
 def kerrecceq_legacy_p_to_u(a, p, e, xI, use_gpu=False):
@@ -178,7 +178,7 @@ def kerrecceq_forward_map(
     # compute separatrix at all points
     pLSO = get_separatrix(a_sep_in, e, xI_sep_in)
 
-    # handle regions A and B
+    # handle regions A and B and C
 
     near = (p <= pLSO + DELTAPMAX) & (a<= AMAX)
     far = (p> pLSO+DELTAPMAX) & (p<=PMAX_REGIONB)
@@ -203,7 +203,7 @@ def kerrecceq_forward_map(
 
 
     if xp.any(near_extremal):
-        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal], is_flux,False) 
+        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal], alpha,beta) 
         u[near_extremal] = out[0]
         w[near_extremal] = out[1]
         y[near_extremal] = out[2]
