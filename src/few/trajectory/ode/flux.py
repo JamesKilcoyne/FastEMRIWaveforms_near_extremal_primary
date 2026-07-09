@@ -28,10 +28,17 @@ from ...utils.mappings.kerrecceq import (
     u_where_w_is_unity,
     w_of_euz_flux,
     z_of_a,
+    z_of_a_nex,
+    w_of_euz_flux_nex,
+    _kerrecceq_flux_forward_map_nex,
+    apex_of_uwyz_nex,
 
+    AMIN_nex,
     AMAX_nex,
     EMAX_nex,
-    PMAX_REGIONC
+    PMAX_REGIONC,
+    DELTAPMIN_REGIONC
+
 )
 from ...utils.utility import _brentq_jit
 from .base import ODEBase
@@ -836,7 +843,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
         self.flux_output_convention = flux_output_convention
 
-        fp = "KerrEccEqFluxData.h5"  #Will change filename
+        fp = "KerrEccEqFluxData_nex.h5"  
 
         if downsample is None:
             downsample = [(1, 1, 1), (1, 1, 1)]
@@ -844,8 +851,8 @@ class KerrEccEqFlux_nex(ODEBase):
         downsample_inner = downsample[0]
         downsample_outer = downsample[1]
 
-        fm = get_file_manager()
-        file_path = fm.get_file(fp)
+        #fm = get_file_manager()
+        file_path = fp  #fm.get_file(fp)      Need to update this to handle a proper filepath
 
         with h5py.File(file_path, "r") as fluxData:
             regionA = fluxData["regionA"]
@@ -856,7 +863,7 @@ class KerrEccEqFlux_nex(ODEBase):
             ugrid, wgrid, zgrid = np.asarray(
                 np.meshgrid(u, w, z, indexing="ij")
             ).reshape(3, -1)
-            agrid, pgrid, egrid, xgrid = apex_of_uwyz(
+            agrid, pgrid, egrid, xgrid = apex_of_uwyz_nex(
                 ugrid, wgrid, np.ones_like(zgrid), zgrid
             )
 
@@ -918,16 +925,16 @@ class KerrEccEqFlux_nex(ODEBase):
                     pgrid.flatten(), egrid.flatten(), risco, psep
                 ).reshape(u.size, w.size, z.size)
 
-                self.pdot_interp_A = TricubicSpline(u, w, z, pdot / pdot_pn)
-                self.edot_interp_A = TricubicSpline(u, w, z, edot / edot_pn)
+                self.pdot_interp_A = TricubicSpline(u, w, z, pdot )
+                self.edot_interp_A = TricubicSpline(u, w, z, edot )
 
             else:
                 EdotPN, LdotPN = _PN_alt(pgrid, egrid)
                 EdotPN = EdotPN.reshape(u.size, w.size, z.size)
                 LdotPN = LdotPN.reshape(u.size, w.size, z.size)
 
-                self.Edot_interp_A = TricubicSpline(u, w, z, Edot / EdotPN)
-                self.Ldot_interp_A = TricubicSpline(u, w, z, Ldot / LdotPN)
+                self.Edot_interp_A = TricubicSpline(u, w, z, Edot )
+                self.Ldot_interp_A = TricubicSpline(u, w, z, Ldot)
 
 
 #Need to change these validity checking functions:
@@ -942,7 +949,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
     @property
     def separatrix_buffer_dist_grid(self):
-        return DELTAPMIN
+        return DELTAPMIN_REGIONC
 
     @property
     def supports_ELQ(self):
@@ -970,7 +977,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
     def isvalid_a(self, a, a_buffer=[0, 0]):
         amax = AMAX_nex - a_buffer[1]
-        amin = -AMAX + a_buffer[0]
+        amin = AMIN_nex + a_buffer[0]
         if np.any(a > amax) or np.any(a < amin):
             raise ValueError(
                 f"Interpolation: a out of bounds. Must be between {amin} and {amax}."
@@ -982,10 +989,10 @@ class KerrEccEqFlux_nex(ODEBase):
         else:
             a_in = a
 
-        z = z_of_a(a_in)
+        z = z_of_a_nex(a_in)
         p_sep = _get_separatrix_kernel_inner(a, e, x)
 
-        if w_of_euz_flux(e, 0.0, z) > 1:
+        if w_of_euz_flux_nex(e, 0.0, z) > 1:
             u_min = u_where_w_is_unity(e, z, kind="flux")
         else:
             u_min = 0.0
@@ -1024,10 +1031,10 @@ class KerrEccEqFlux_nex(ODEBase):
 
         p_min = self._min_p(EMAX, x, a)
         if p > p_min:
-            emax = EMAX
+            emax = EMAX_nex
         else:
             tol = 1e-13
-            z = z_of_a(a_in)
+            z = z_of_a_nex(a_in)
             emax = _brentq_jit(_emax_w, 0, EMAX, (a_in, p, z), tol)
 
             # if you lie below the separatrix, then you are limited by the max e-value on the separatrix
@@ -1050,10 +1057,10 @@ class KerrEccEqFlux_nex(ODEBase):
         return self._max_e(p, x, a)
 
     def _min_a(self, p, e, x):
-        return -AMAX
+        return AMIN_nex
 
     def _max_a(self, p, e, x):
-        return AMAX
+        return AMAX_nex
 
     def min_a(self, p=20, e=0, x=1):
         self.isvalid_x(x)
@@ -1132,7 +1139,7 @@ class KerrEccEqFlux_nex(ODEBase):
         else:
             a_in = a
 
-        u, w, _, z, in_region_A = _kerrecceq_flux_forward_map(a_in, p, e, 1.0, pLSO)
+        u, w, _, z, in_region_A = _kerrecceq_flux_forward_map_nex(a_in, p, e, 1.0, pLSO)
 
         if u < edge_buffer or u > 1 - edge_buffer or np.isnan(u):
             raise ValueError("Interpolation: p out of bounds.")
@@ -1142,18 +1149,18 @@ class KerrEccEqFlux_nex(ODEBase):
             if self.integrate_backwards:
                 raise ValueError("Interpolation: e out of bounds.")
             else:
-                raise TrajectoryOffGridException("Interpolation: e out of bounds.")
+                raise TrajectoryOffGridException(f"Interpolation: e out of bounds.{e,w,p,e}")
 
         if z < edge_buffer or z > 1 - edge_buffer:
             raise TrajectoryOffGridException("Interpolation: a out of bounds.")
 
         if self.flux_output_convention == "ELQ":
             EdotPN, LdotPN = _PN_alt(p, e)
-            if in_region_A:
-                Edot = -self.Edot_interp_A(u, w, z) * EdotPN
-                Ldot = -self.Ldot_interp_A(u, w, z) * LdotPN
+            if in_region_A=="RegionC":
+                Edot = -self.Edot_interp_A(u, w, z) 
+                Ldot = -self.Ldot_interp_A(u, w, z) 
             else:
-                raise ValueError("Make sure you are in the right region of paramter space")
+                raise ValueError("Make sure you are in the right region of parameter space")
 
             if a_in < 0:
                 Ldot *= -1
@@ -1165,9 +1172,9 @@ class KerrEccEqFlux_nex(ODEBase):
             p_sep = pLSO
             pdotPN = _pdot_PN(p, e, risco, p_sep)
             edotPN = _edot_PN(p, e, risco, p_sep)
-            if in_region_A:
-                pdot = -self.pdot_interp_A(u, w, z) * pdotPN
-                edot = -self.edot_interp_A(u, w, z) * edotPN
+            if in_region_A=="RegionC":
+                pdot = -self.pdot_interp_A(u, w, z) 
+                edot = -self.edot_interp_A(u, w, z) 
             else:
                 pass
 
