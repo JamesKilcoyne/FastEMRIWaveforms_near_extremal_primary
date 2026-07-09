@@ -28,13 +28,16 @@ DELTAPMIN_REGIONB = 9
 
 #Parameters for region C (near-extremal region)
 
-DELTAPMIN_REGIONC = DELTAPMIN                   ## may change
-DELTAPMAX_REGIONC = DELTAPMAX
-PMAX_REGIONC = DELTAPMAX_REGIONC
+DELTAPMIN_REGIONC = 10**(-1.625)             ## may change
+DELTAPMAX_nex = 10
+DELTAPMAX_REGIONC = DELTAPMAX_nex     #redundant
+PMAX_REGIONC = DELTAPMAX_REGIONC+2
 
 AMAX_nex =  1-10**(-12)# AMAX   # 1-10**(-12)
-AMIN_nex = AMAX  # AMAX  
-EMAX_nex = EMAX   # 0.4
+AMIN_nex = 0.99  # AMAX  
+EMAX_nex =  0.4
+ALPHA_FLUX_nex= ALPHA_FLUX
+BETA_FLUX_nex = BETA_FLUX
 
 
 def kerrecceq_legacy_p_to_u(a, p, e, xI, use_gpu=False):
@@ -266,7 +269,7 @@ def kerrecceq_backward_map(
         elif Region == "RegionB":
             return apex_of_UWYZ(u, w, y, z, is_flux)
         elif Region == "RegionC":
-            return apex_of_uwyz(u, w, y, z, is_flux)
+            return apex_of_uwyz_nex(u, w, y, z, is_flux)
 
     # else, we have multiple points
     u = xp.atleast_1d(xp.asarray(u))
@@ -274,13 +277,13 @@ def kerrecceq_backward_map(
     y = xp.atleast_1d(xp.asarray(y))
     z = xp.atleast_1d(xp.asarray(z))
 
-    if regionA:
-        if Region == "RegionA":
-            return apex_of_uwyz(u, w, y, z, alpha=alpha, beta=beta)
-        elif Region == "RegionB":
-            return apex_of_UWYZ(u, w, y, z, is_flux)
-        elif Region == "RegionC":
-            return apex_of_uwyz_nex(u, w, y, z, is_flux)
+
+    if Region == "RegionA":
+         return apex_of_uwyz(u, w, y, z, alpha=alpha, beta=beta)
+    elif Region == "RegionB":
+        return apex_of_UWYZ(u, w, y, z, is_flux)
+    elif Region == "RegionC":
+        return apex_of_uwyz_nex(u, w, y, z, is_flux)
 
 
 @njit
@@ -583,8 +586,8 @@ def apex_of_UWYZ(
 @njit
 def u_of_p_nex(p, pLSO, alpha):
     check_term = (
-        np.log(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - log(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
-    ) / log(2)
+        np.log10(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - np.log10(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
+    ) / np.log10(2)
     sgn = np.sign(check_term)
     return sgn * (sgn * check_term) ** alpha
 
@@ -592,26 +595,26 @@ def u_of_p_nex(p, pLSO, alpha):
 @njit
 def u_of_p_flux_nex(p, pLSO):
     check_term = (
-        np.log(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - log(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
-    ) / log(2)
+        np.log10(p - pLSO + DELTAPMAX_REGIONC - 2 * DELTAPMIN_REGIONC) - np.log10(DELTAPMAX_REGIONC - DELTAPMIN_REGIONC)
+    ) / np.log10(2)
     if check_term < 0:
-        return -((-check_term) ** ALPHA_FLUX)
+        return -((-check_term) ** ALPHA_FLUX_nex)
     else:
-        return check_term**ALPHA_FLUX
+        return check_term**ALPHA_FLUX_nex
     
 
 
 @njit
 def p_of_u_nex(u, pLSO, alpha):
     return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
-        np.exp(u ** (1 / alpha) * log(2)) - 1
+        10**(u ** (1 / alpha) * np.log10(2)) - 1    
     )
 
 
 @njit
 def p_of_u_flux_nex(u, pLSO):
     return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
-        np.exp(u ** (1 / ALPHA_FLUX) * log(2)) - 1
+        10**(u ** (1 / ALPHA_FLUX_nex) * np.log10(2)) - 1  
     )
 
 
@@ -625,7 +628,7 @@ def chi_of_a_nex(a):
 def z_of_a_nex(a):
     chimax = chi_of_a_nex(AMIN_nex)
     chimin = chi_of_a_nex(AMAX_nex)
-    return (chi_of_a_nex(a) - chimin) / (chimax - chimin)
+    return (chi_of_a_nex(a) - chimax) / (chimin - chimax)
 
 
 @njit
@@ -635,9 +638,9 @@ def a_of_chi_nex(chi):
 
 @njit
 def a_of_z_nex(z):
-    chimax = chi_of_a_nex(AMIN)
-    chimin = chi_of_a_nex(AMAX)
-    return a_of_chi_nex(chimin + z * (chimax - chimin))
+    chimax = chi_of_a_nex(AMIN_nex)
+    chimin = chi_of_a_nex(AMAX_nex)
+    return a_of_chi_nex(chimax + z * (chimin - chimax))
 
 
 #(e,w)
@@ -655,12 +658,22 @@ def Secc_of_uz_nex(
 
 @njit
 def w_of_euz_nex(e, u, z, beta):
-    return e / Secc_of_uz_nex(u, z, beta)
+    return e / EMAX_nex
 
 
 @njit
 def w_of_euz_flux_nex(e, u, z):
-    return e / Secc_of_uz_nex(u, z, BETA_FLUX)
+    return e / EMAX_nex
+
+@njit
+def e_of_uwz_nex(u, w, z, beta):
+    return  w*EMAX_nex
+
+@njit
+def e_of_uwz_flux_nex(u, w, z):
+    return w*EMAX_nex
+
+
 
 
 
@@ -689,8 +702,8 @@ def apex_of_uwyz_nex(
     w,
     y,
     z,
-    alpha=ALPHA_FLUX,
-    beta=BETA_FLUX,
+    alpha=ALPHA_FLUX_nex,
+    beta=BETA_FLUX_nex,
 ):
     a = a_of_z_nex(z)
     x = x_of_y(y)
@@ -708,3 +721,118 @@ def apex_of_uwyz_nex(
     pLSO = get_separatrix(a_in, e, x_in)
     p = p_of_u_nex(u, pLSO, alpha)
     return a, p, e, x
+
+
+#hack fix the forward and backward maps
+
+@njit
+def _kerrecceq_flux_forward_map_nex(
+    a: float,
+    p: float,
+    e: float,
+    xI: float,
+    pLSO: float,
+):
+    """
+    A jit-compiled forward mapping for the flux grids, optimised for fast ODE evaluations.
+    """
+
+
+    return *_uwyz_of_apex_kernel_nex(a, p, e, xI, pLSO, ALPHA_FLUX_nex, BETA_FLUX_nex), "RegionC"
+
+
+def kerrecceq_forward_map_nex(
+    a: Union[float, np.ndarray],
+    p: Union[float, np.ndarray],
+    e: Union[float, np.ndarray],
+    xI: Union[float, np.ndarray],
+    pLSO: Optional[Union[float, np.ndarray]] = None,
+    return_mask: bool = False,
+    kind: str = "flux",
+):
+
+
+    xp = np  # TODO: gpu
+
+    if np.any(xI != 1):
+        raise ValueError("Only xI = 1 is supported.")
+
+    if kind == "flux":
+        is_flux = True
+        alpha = ALPHA_FLUX_nex
+        beta = BETA_FLUX_nex
+    elif kind == "amplitude":
+        is_flux = False
+        alpha = ALPHA_AMP_nex
+        beta = BETA_AMP_nex
+    else:
+        raise ValueError
+
+    a = xp.atleast_1d(xp.asarray(a))
+    p = xp.atleast_1d(xp.asarray(p))
+    e = xp.atleast_1d(xp.asarray(e))
+    xI = xp.atleast_1d(xp.asarray(xI))
+
+    u = xp.zeros_like(a)
+    w = xp.zeros_like(a)
+    y = xp.zeros_like(a)
+    z = xp.zeros_like(a)
+
+    a_sep_in = xp.abs(a)
+
+    asign = xp.sign(a)
+    asign[asign == 0] = 1
+
+    xI_sep_in = asign * xI
+
+    # compute separatrix at all points
+    pLSO = get_separatrix(a_sep_in, e, xI_sep_in)
+
+    # handle regions A and B and C
+
+    near = (p <= (pLSO + DELTAPMAX)*0) & (a<= AMAX)        #change near and far so that they are enver true, quickfix
+    far = (p> (pLSO+DELTAPMAX)*1000) & (p<=PMAX_REGIONB)
+    near_extremal = (p <= pLSO + DELTAPMAX_nex)  & (a>=AMIN_nex)
+
+
+    if xp.any(near):
+        out = _uwyz_of_apex_kernel(
+            a[near], p[near], e[near], xI[near], pLSO[near], alpha, beta
+        )
+        u[near] = out[0]
+        w[near] = out[1]
+        y[near] = out[2]
+        z[near] = out[3]
+
+    if xp.any(far):
+        out = _UWYZ_of_apex_kernel(a[far], p[far], e[far], xI[far], pLSO[far], is_flux)
+        u[far] = out[0]
+        w[far] = out[1]
+        y[far] = out[2]
+        z[far] = out[3]
+
+
+    if xp.any(near_extremal):
+        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal], alpha,beta) 
+        u[near_extremal] = out[0]
+        w[near_extremal] = out[1]
+        y[near_extremal] = out[2]
+        z[near_extremal] = out[3]
+
+    if return_mask:
+        return u, w, y, z, [near, far, near_extremal]
+    else:
+        return u, w, y, z
+    
+
+
+
+def kerrecceq_backward_map_nex(
+    u: Union[float, np.ndarray],
+    w: Union[float, np.ndarray],
+    y: Union[float, np.ndarray],
+    z: Union[float, np.ndarray],
+    Region: str = "RegionC",
+    kind: str = "flux",
+):
+    return kerrecceq_backward_map(u,w,y,z,"RegionC","flux")
