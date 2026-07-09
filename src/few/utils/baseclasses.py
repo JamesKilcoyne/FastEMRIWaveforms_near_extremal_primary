@@ -705,9 +705,9 @@ class KerrEccentricEquatorial_nex(SphericalHarmonic):
             a = -a
             xI = -xI
 
-        if a > 1 - 10**(-12) or a < 0.999:
+        if a > 1 - 10**(-12) or a < 0.99:
             raise ValueError(
-                r"Larger black hole spin magnitude below 0.999, or above $1 - 10^{-12}$ is outside of our domain of validity."
+                r"Larger black hole spin magnitude below 0.99, or above $1 - 10^{-12}$ is outside of our domain of validity."
             )
 
         # transform parameters and check they are within bounds
