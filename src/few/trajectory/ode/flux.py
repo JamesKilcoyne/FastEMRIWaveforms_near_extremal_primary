@@ -372,7 +372,7 @@ class KerrEccEqFlux(ODEBase):
                     pgrid.flatten(), egrid.flatten(), risco, psep
                 ).reshape(u.size, w.size, z.size)
 
-                self.pdot_interp_A = TricubicSpline(u, w, z, pdot / pdot_pn)
+                self.pdot_interp_A = TricubicSpline(u, w, z, pdot /pdot_pn)
                 self.edot_interp_A = TricubicSpline(u, w, z, edot / edot_pn)
 
             else:
@@ -542,6 +542,7 @@ class KerrEccEqFlux(ODEBase):
         return 0.0
 
     def _max_e(self, p, x, a):
+        
         if x == -1:
             a_in = -a
         else:
@@ -566,6 +567,8 @@ class KerrEccEqFlux(ODEBase):
                 emax = _brentq_jit(
                     _emax_sep, 0, emax, (a_in, p - self.separatrix_buffer_dist), tol
                 )
+
+        
         return emax
 
     def min_e(self, p=20, x=1, a=0):
@@ -854,6 +857,8 @@ class KerrEccEqFlux_nex(ODEBase):
         #fm = get_file_manager()
         file_path = fp  #fm.get_file(fp)      Need to update this to handle a proper filepath
 
+        print(fp)
+
         with h5py.File(file_path, "r") as fluxData:
             regionA = fluxData["regionA"]
             u = np.linspace(0, 1, regionA.attrs["NU"])[:: downsample_inner[0]]
@@ -885,6 +890,7 @@ class KerrEccEqFlux_nex(ODEBase):
                 Ldothere = (Ldot).flatten()
                 xgrid = np.sign(agrid)
                 xgrid[xgrid == 0] = 1
+                
 
                 Ldothere = Ldothere * xgrid
                 agrid = np.abs(agrid)
@@ -910,7 +916,11 @@ class KerrEccEqFlux_nex(ODEBase):
                     or np.isnan(Ldot).any()
                 ):
                     raise ValueError("Interpolation: nans in pdot, edot or Edot, Ldot.")
+                else:
+                    print("All good")
 
+                out_pdot_edot[egrid==0,1] = 0
+                
                 pdot = out_pdot_edot[:, 0].reshape(u.size, w.size, z.size)
                 edot = out_pdot_edot[:, 1].reshape(u.size, w.size, z.size)
 
@@ -925,19 +935,21 @@ class KerrEccEqFlux_nex(ODEBase):
                     pgrid.flatten(), egrid.flatten(), risco, psep
                 ).reshape(u.size, w.size, z.size)
 
-                self.pdot_interp_A = TricubicSpline(u, w, z, pdot )
-                self.edot_interp_A = TricubicSpline(u, w, z, edot )
+               # pdot_pn = 1#np.where(pgrid.reshape(u.size, w.size, z.size) > 5, pdot_pn,1)
+               # edot_pn = 1#np.where(pgrid.reshape(u.size, w.size, z.size) > 5, edot_pn,1)
+
+                self.pdot_interp_A = TricubicSpline(u, w, z, pdot/pdot_pn )
+                self.edot_interp_A = TricubicSpline(u, w, z, edot/edot_pn )
 
             else:
                 EdotPN, LdotPN = _PN_alt(pgrid, egrid)
                 EdotPN = EdotPN.reshape(u.size, w.size, z.size)
                 LdotPN = LdotPN.reshape(u.size, w.size, z.size)
 
-                self.Edot_interp_A = TricubicSpline(u, w, z, Edot )
-                self.Ldot_interp_A = TricubicSpline(u, w, z, Ldot)
+                self.Edot_interp_A = TricubicSpline(u, w, z, Edot /EdotPN)
+                self.Ldot_interp_A = TricubicSpline(u, w, z, Ldot/LdotPN)
 
 
-#Need to change these validity checking functions:
 
     @property
     def equatorial(self):
@@ -945,7 +957,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
     @property
     def separatrix_buffer_dist(self):
-        return 2 * DELTAPMIN
+        return 3.5 * DELTAPMIN_REGIONC
 
     @property
     def separatrix_buffer_dist_grid(self):
@@ -1022,26 +1034,7 @@ class KerrEccEqFlux_nex(ODEBase):
             a_in = -a
         else:
             a_in = a
-
-        p_sep_min_buffer = get_separatrix(a_in, 0, 1) + self.separatrix_buffer_dist
-        if p < p_sep_min_buffer:
-            raise ValueError(
-                f"Interpolation: p out of bounds. Must be greater than innermost stable circular orbit + buffer = {p_sep_min_buffer}."
-            )
-
-        p_min = self._min_p(EMAX, x, a)
-        if p > p_min:
-            emax = EMAX_nex
-        else:
-            tol = 1e-13
-            z = z_of_a_nex(a_in)
-            emax = _brentq_jit(_emax_w, 0, EMAX, (a_in, p, z), tol)
-
-            # if you lie below the separatrix, then you are limited by the max e-value on the separatrix
-            if get_separatrix(a_in, emax, 1) > p:
-                emax = _brentq_jit(
-                    _emax_sep, 0, emax, (a_in, p - self.separatrix_buffer_dist), tol
-                )
+            emax = 0.4
         return emax
 
     def min_e(self, p=20, x=1, a=0):
@@ -1157,13 +1150,14 @@ class KerrEccEqFlux_nex(ODEBase):
         if self.flux_output_convention == "ELQ":
             EdotPN, LdotPN = _PN_alt(p, e)
             if in_region_A=="RegionC":
-                Edot = -self.Edot_interp_A(u, w, z) 
-                Ldot = -self.Ldot_interp_A(u, w, z) 
+                Edot = -self.Edot_interp_A(u, w, z) * EdotPN
+                Ldot = -self.Ldot_interp_A(u, w, z) * LdotPN
             else:
                 raise ValueError("Make sure you are in the right region of parameter space")
 
             if a_in < 0:
                 Ldot *= -1
+                
 
             return Edot, Ldot
 
@@ -1172,11 +1166,15 @@ class KerrEccEqFlux_nex(ODEBase):
             p_sep = pLSO
             pdotPN = _pdot_PN(p, e, risco, p_sep)
             edotPN = _edot_PN(p, e, risco, p_sep)
+          #  pdotPN = np.where(p > 5, pdotPN,1)
+           # edotPN = np.where(p > 5, edotPN,1)
             if in_region_A=="RegionC":
-                pdot = -self.pdot_interp_A(u, w, z) 
-                edot = -self.edot_interp_A(u, w, z) 
+                pdot = -self.pdot_interp_A(u, w, z) *pdotPN
+                edot = -self.edot_interp_A(u, w, z) * edotPN
+                #print(pdot)
             else:
                 pass
+                
 
             return pdot, edot
 

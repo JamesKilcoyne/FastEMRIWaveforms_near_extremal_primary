@@ -19,7 +19,7 @@ from .dopr853 import DOPR853
 from .ode import _STOCK_TRAJECTORY_OPTIONS
 from .ode.base import ODEBase, get_ode_properties
 
-INNER_THRESHOLD = 1e-10
+INNER_THRESHOLD = 1e-10 ############
 PERCENT_STEP = 0.25
 MAX_ITER = 1000
 
@@ -69,7 +69,7 @@ class Integrate:
         func: Type[ODEBase],
         integrate_constants_of_motion: bool = False,
         downsample=None,
-        buffer_length: int = 10000,
+        buffer_length: int = 10000,################################
         enforce_schwarz_sep: bool = False,
         max_iter: Optional[int] = None,
         **kwargs,
