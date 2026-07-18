@@ -36,7 +36,7 @@ PMAX_REGIONC = DELTAPMAX_REGIONC+2
 AMAX_nex =  1-10**(-12)# AMAX   # 1-10**(-12)
 AMIN_nex = 0.99  # AMAX  
 EMAX_nex =  0.4
-ALPHA_FLUX_nex= ALPHA_FLUX
+ALPHA_FLUX_nex= 1/4#ALPHA_FLUX
 BETA_FLUX_nex = BETA_FLUX
 
 
@@ -583,6 +583,7 @@ def apex_of_UWYZ(
 
 
 #(p,u)
+'''
 @njit
 def u_of_p_nex(p, pLSO, alpha):
     check_term = (
@@ -601,9 +602,20 @@ def u_of_p_flux_nex(p, pLSO):
         return -((-check_term) ** ALPHA_FLUX_nex)
     else:
         return check_term**ALPHA_FLUX_nex
-    
+'''
+@njit
+def u_of_p_flux_nex(p,pLSO):
+    num = np.log10(p-pLSO) - np.log10(DELTAPMIN_REGIONC)
+    den = np.log10(DELTAPMAX_REGIONC) - np.log10(DELTAPMIN_REGIONC)
+    return num/den
 
+@njit
+def u_of_p_nex(p,pLSO,alpha):
+    num = np.log10(p-pLSO) - np.log10(DELTAPMIN_REGIONC)
+    den = np.log10(DELTAPMAX_REGIONC) - np.log10(DELTAPMIN_REGIONC)
+    return num/den
 
+'''
 @njit
 def p_of_u_nex(u, pLSO, alpha):
     return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
@@ -616,7 +628,14 @@ def p_of_u_flux_nex(u, pLSO):
     return (pLSO + DELTAPMIN_REGIONC) + (DELTAPMAX_REGIONC - DELTAPMIN_REGIONC) * (
         10**(u ** (1 / ALPHA_FLUX_nex) * np.log10(2)) - 1  
     )
+'''
+@njit
+def p_of_u_nex(u,pLSO,alpha):
+    return 10**(u*(np.log10(DELTAPMAX_REGIONC)-np.log10(DELTAPMIN_REGIONC)) + np.log10(DELTAPMIN_REGIONC))+pLSO
 
+@njit
+def p_of_u_flux_nex(u,pLSO):
+    return 10**(u*(np.log10(DELTAPMAX_REGIONC)-np.log10(DELTAPMIN_REGIONC)) + np.log10(DELTAPMIN_REGIONC))+pLSO
 
 #(a,z)
 
@@ -835,4 +854,30 @@ def kerrecceq_backward_map_nex(
     Region: str = "RegionC",
     kind: str = "flux",
 ):
-    return kerrecceq_backward_map(u,w,y,z,"RegionC","flux")
+    if np.any(np.asarray(y) != 1):
+        raise ValueError("Only xI = 1 is supported.")
+
+    xp= np
+    
+    is_flux = kind == "flux"
+    is_amp = kind == "amplitude"
+    if is_flux:
+        alpha = ALPHA_FLUX_nex
+        beta = BETA_FLUX_nex
+    elif is_amp:
+        alpha = ALPHA_AMP_nex
+        beta = BETA_AMP_nex
+    else:
+        raise ValueError
+    
+    # if scalar directly evaluate the kernel for speed
+    if not hasattr(u, "__len__"):
+        return apex_of_uwyz_nex(u, w, y, z, is_flux)
+    
+    # else, we have multiple points
+    u = xp.atleast_1d(xp.asarray(u))
+    w = xp.atleast_1d(xp.asarray(w))
+    y = xp.atleast_1d(xp.asarray(y))
+    z = xp.atleast_1d(xp.asarray(z))
+    
+    return apex_of_uwyz_nex(u, w, y, z, alpha, beta)
