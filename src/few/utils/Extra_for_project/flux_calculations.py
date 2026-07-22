@@ -93,6 +93,12 @@ def nex(a,p,e,x):
 
     return Edot_interps(u,w,z), Ldot_interps(u,w,z), -pdot_interps(u,w,z)*pn_term_p, -edot_interps(u,w,z)*pn_term_e,[u,w,y,z]   
 
+
+def drE(r,a):
+    num = r**2 - 3*a**2 + 8*a *np.sqrt(r) - 6*r
+    den = 2*r**(7/4) * (r**(3/2)-3*np.sqrt(r)+2*a)**(3/2)
+    return num/den
+
 def nex_pedot(a,p,e,x): #Returns the actual rhs used to make traj
     psep = get_separatrix(a,e,x)
     pisco = get_separatrix(a,np.zeros_like(a),x)
@@ -100,6 +106,8 @@ def nex_pedot(a,p,e,x): #Returns the actual rhs used to make traj
 
     pn_term_p = _pdot_PN(p,e,pisco,psep)
     pn_term_e = _edot_PN(p,e,pisco,psep)
+
+    turn = drE(p,a)
 
     pdot_interps = pex_nex.pdot_interp_A
     edot_interps = pex_nex.edot_interp_A
