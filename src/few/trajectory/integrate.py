@@ -69,7 +69,7 @@ class Integrate:
         func: Type[ODEBase],
         integrate_constants_of_motion: bool = False,
         downsample=None,
-        buffer_length: int = 10000,################################
+        buffer_length: int = 100000,################################
         enforce_schwarz_sep: bool = False,
         max_iter: Optional[int] = None,
         **kwargs,
