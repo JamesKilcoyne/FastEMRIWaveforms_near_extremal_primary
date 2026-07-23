@@ -3,6 +3,7 @@ from typing import Optional, Union
 
 import h5py
 import numpy as np
+import matplotlib.pyplot as plt
 from multispline.spline import BicubicSpline, TricubicSpline
 from numba import njit
 
@@ -822,7 +823,10 @@ class KerrEccEqFluxLegacy(ODEBase):
         return [pdot, edot, 0.0, Omega_phi, Omega_theta, Omega_r]
 
 
-
+def drE(r,a):
+    num = r**2 - 3*a**2 + 8*a *np.sqrt(r) - 6*r
+    den = 2*r**(7/4) * (r**(3/2)-3*np.sqrt(r)+2*a)**(3/2)
+    return num/den
 
 class KerrEccEqFlux_nex(ODEBase):
     """
@@ -846,7 +850,8 @@ class KerrEccEqFlux_nex(ODEBase):
 
         self.flux_output_convention = flux_output_convention
 
-        fp = "KerrEccEqFluxData_nex.h5"  
+        fp = "KerrEccEqFluxData_nex_v2.h5"  
+       # fp = "KerrEccEqFluxData_nex.h5"  
 
         if downsample is None:
             downsample = [(1, 1, 1), (1, 1, 1)]
@@ -856,8 +861,6 @@ class KerrEccEqFlux_nex(ODEBase):
 
         #fm = get_file_manager()
         file_path = fp  #fm.get_file(fp)      Need to update this to handle a proper filepath
-
-        print(fp)
 
         with h5py.File(file_path, "r") as fluxData:
             regionA = fluxData["regionA"]
@@ -916,8 +919,7 @@ class KerrEccEqFlux_nex(ODEBase):
                     or np.isnan(Ldot).any()
                 ):
                     raise ValueError("Interpolation: nans in pdot, edot or Edot, Ldot.")
-                else:
-                    print("All good")
+    
 
                 out_pdot_edot[egrid==0,1] = 0
                 
@@ -935,8 +937,7 @@ class KerrEccEqFlux_nex(ODEBase):
                     pgrid.flatten(), egrid.flatten(), risco, psep
                 ).reshape(u.size, w.size, z.size)
 
-               # pdot_pn = 1#np.where(pgrid.reshape(u.size, w.size, z.size) > 5, pdot_pn,1)
-               # edot_pn = 1#np.where(pgrid.reshape(u.size, w.size, z.size) > 5, edot_pn,1)
+               # dE_r = drE(pgrid,agrid).reshape(u.size, w.size, z.size)
 
                 self.pdot_interp_A = TricubicSpline(u, w, z, pdot/pdot_pn )
                 self.edot_interp_A = TricubicSpline(u, w, z, edot/edot_pn )
@@ -957,7 +958,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
     @property
     def separatrix_buffer_dist(self):
-        return 3.5 * DELTAPMIN_REGIONC
+        return 2 * DELTAPMIN_REGIONC
 
     @property
     def separatrix_buffer_dist_grid(self):
@@ -1166,12 +1167,14 @@ class KerrEccEqFlux_nex(ODEBase):
             p_sep = pLSO
             pdotPN = _pdot_PN(p, e, risco, p_sep)
             edotPN = _edot_PN(p, e, risco, p_sep)
-          #  pdotPN = np.where(p > 5, pdotPN,1)
-           # edotPN = np.where(p > 5, edotPN,1)
+
+            dE_r = drE(p,a_in)
+
             if in_region_A=="RegionC":
-                pdot = -self.pdot_interp_A(u, w, z) *pdotPN
+                pdot = -self.pdot_interp_A(u, w, z) *pdotPN # / dE_r
                 edot = -self.edot_interp_A(u, w, z) * edotPN
-                #print(pdot)
+               # plt.plot(p,pdot,".")
+    
             else:
                 pass
                 
