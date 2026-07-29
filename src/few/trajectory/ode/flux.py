@@ -850,10 +850,8 @@ class KerrEccEqFlux_nex(ODEBase):
 
         self.flux_output_convention = flux_output_convention
 
-        fp = "data/KerrEccEqFluxData_nex_v2.h5"
-          # opens the file whereever your CWD is, not where the script is located, for me the file is here relative to my "extra" folder
-       # fp = "KerrEccEqFluxData_nex.h5"  
-
+        fp = "KerrEccEqFluxData_nex_v2.h5"
+ 
         if downsample is None:
             downsample = [(1, 1, 1), (1, 1, 1)]
 
