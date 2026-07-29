@@ -25,7 +25,7 @@ from ..utils.baseclasses import (
 )
 from ..utils.citations import REFERENCE
 from ..utils.geodesic import get_separatrix
-from ..utils.mappings.kerrecceq import kerrecceq_forward_map
+from ..utils.mappings.kerrecceq import kerrecceq_forward_map, kerrecceq_backward_map_nex
 from ..utils.mappings.schwarzecc import schwarzecc_p_to_y
 from .base import AmplitudeBase
 
@@ -646,7 +646,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         fp: The coefficients file name in `file_directory`.
         **kwargs: Optional keyword arguments for the base classes:
             :class:`few.utils.baseclasses.AmplitudeBase`,
-            :class:`few.utils.baseclasses.KerrEccentricEquatorial`.
+            :class:`few.utils.baseclasses.KerrEccentricEquatorialv2`.
     """
 
     filename: str
@@ -663,10 +663,9 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         **kwargs,
     ):
         AmplitudeBase.__init__(self)
-        KerrEccentricEquatorial.__init__(self, force_backend=force_backend, **kwargs)
 
         self.filename = (
-            "ZNAmps_l10_m10_n55_DS2Outer.h5" if filename is None else filename     # Will need to change filename
+            "ZNAmps_l10_m10_n92__extremal.h5" if filename is None else filename
         )
 
         from few import get_file_manager
@@ -674,16 +673,22 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         file_path = get_file_manager().get_file(self.filename)
 
         with h5py.File(file_path, "r") as f:
+            mode_indices = f["modes"]["mode_indices"][()]
+
+        KerrEccentricEquatorial_nex.__init__(self, mode_indices=mode_indices, force_backend=force_backend, **kwargs)
+
+        with h5py.File(file_path, "r") as f:
             regionA = f["regionA"]
             coeffsA = regionA["CoeffsRegionA"][()]
             w_knots = regionA["w_knots"][()]
             u_knots = regionA["u_knots"][()]
             z_knots = regionA["z_knots"][()]
+            # paramsA = regionA["ParamsRegionA"][()]
 
             z_knots = z_knots[::downsample_Z]
             coeffsA = coeffsA[::downsample_Z]
 
-            self.spin_information_holder_C = [
+            self.spin_information_holder_A = [
                 self.build_with_same_backend(
                     AmpInterp2D,
                     args=[
@@ -692,28 +697,58 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
                         coeffsA[i],
                         self.l_arr,
                         self.m_arr,
-                        self.k_arr,
-                        self.n_arr,
+                        self.mode_arr[:, 2],
+                        self.mode_arr[:, 3],
                     ],
                 )
                 for i in range(z_knots.size)
             ]
 
+            try:
+                regionB = f["regionB"]
+                coeffsB = regionB["CoeffsRegionB"][()]
+
+                w_knots = regionB["w_knots"][()]
+                u_knots = regionB["u_knots"][()]
+                z_knots = regionB["z_knots"][()]
+
+                z_knots = z_knots[::downsample_Z]
+
+                coeffsB = coeffsB[::downsample_Z]
+
+                self.spin_information_holder_B = [
+                    self.build_with_same_backend(
+                        AmpInterp2D,
+                        args=[
+                            w_knots,
+                            u_knots,
+                            coeffsB[i],
+                            self.l_arr,
+                            self.m_arr,
+                            self.mode_arr[:, 2],
+                            self.mode_arr[:, 3],
+                        ],
+                    )
+                    for i in range(z_knots.size)
+                ]
+            except KeyError:
+                pass
 
         self.z_values = z_knots
 
-    def _evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
-
+    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):
         z_out = self.xp.zeros(
-            (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
+            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
         )
 
-        region_A_mask, region_B_mask, region_C_mask = Region_masks
+        if self.xp.any(region_A_mask):
+            z_out[region_A_mask, :] = self.spin_information_holder_A[index](
+                w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
+            )
 
-
-        if self.xp.any(region_C_mask):
-            z_out[region_C_mask, :] = self.spin_information_holder_C[index](
-                w[region_C_mask], u[region_C_mask], mode_indexes=mode_indexes  #Modify to include region C
+        if self.xp.any(~region_A_mask):
+            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
+                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
             )
 
         return z_out
@@ -754,7 +789,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         xI_in = self.xp.abs(xI_in)
 
         try:
-            u, w, y, z, region_mask = kerrecceq_forward_map(
+            u, w, y, z, region_mask = kerrecceq_forward_map_nex(
                 a_in.get(),
                 p.get(),
                 e.get(),
@@ -764,7 +799,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
             )
 
         except AttributeError:
-            u, w, y, z, region_mask = kerrecceq_forward_map(
+            u, w, y, z, region_mask = kerrecceq_forward_map_nex(
                 a_in,
                 p,
                 e,
@@ -775,8 +810,6 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         z_check = z[0].item()
 
         region_mask = self.xp.asarray(region_mask)
-
-
         u = self.xp.asarray(u)
         w = self.xp.asarray(w)
         z = self.xp.asarray(z)
