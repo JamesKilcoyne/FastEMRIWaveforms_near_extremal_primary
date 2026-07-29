@@ -345,11 +345,17 @@ class ModeSelector(ParallelModuleBase):
         elif isinstance(mode_selection, list):
             try:
                 keep_modes = self.modeinds_map[mode_arr[:, 0], mode_arr[:, 1], mode_arr[:, 2], mode_arr[:,3]]
+                conj_mode_mask = self.xp.where(mode_arr[:, 1] < 0, True, False)
             except IndexError:
                 raise ValueError("Mode selection indices are out of bounds.")
 
             # pass array of mode indexes (most efficient, returns an array)
             teuk_modes = self.amplitude_generator(a, p, e, xI, specific_modes=keep_modes)
+            teuk_modes[:, conj_mode_mask] = self.xp.conj(teuk_modes[:, conj_mode_mask])
+            conj_phase = self.xp.ones_like(mode_arr[:, 0])
+            lk_odd_mask = self.xp.where((mode_arr[:, 0] + mode_arr[:, 2]) % 2 == 1, True, False)
+            conj_phase[lk_odd_mask] = -1.0
+            teuk_modes[:, conj_mode_mask] *= conj_phase[conj_mode_mask]
 
             # get ylms, only for the desired modes (needs to include -m modes in general, so we pass the kwarg)
             ylms_out = self.ylm_generator(mode_arr[:, 0], mode_arr[:,1], theta, phi, include_minus_m=True)

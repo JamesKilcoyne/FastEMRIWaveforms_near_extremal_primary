@@ -16,6 +16,7 @@ from numba import njit
 from ..utils.baseclasses import (
     BackendLike,
     KerrEccentricEquatorial,
+    KerrEccentricEquatorialv2,
     ParallelModuleBase,
     SchwarzschildEccentric,
     KerrGeneric,
@@ -103,13 +104,6 @@ class AmpInterp2D(AmplitudeBase, ParallelModuleBase):
         self.coeff = self.xp.asarray(coefficients)
         """np.ndarray: Array holding all spline coefficient information."""
 
-        # for mode_ind in range(self.num_teuk_modes):
-        #     spl1 = RectBivariateSpline(w_knots, u_knots, coefficients[mode_ind,0], kx=3, ky=3)
-        #     spl2 = RectBivariateSpline(w_knots, u_knots, coefficients[mode_ind,1], kx=3, ky=3)
-
-        #     self.coeff[mode_ind,0] = spl1.tck[2].flatten()
-        #     self.coeff[mode_ind,1] = spl2.tck[2].flatten()
-
         self.len_indiv_c = self.coeff.shape[2]
 
     @property
@@ -153,14 +147,14 @@ class AmpInterp2D(AmplitudeBase, ParallelModuleBase):
 
         # standard Numpy broadcasting
         if w.shape != u.shape:
-            w, u = np.broadcast_arrays(w, u)
+            w, u = self.xp.broadcast_arrays(w, u)
 
         shape = w.shape
         w = w.ravel()
         u = u.ravel()
 
         if w.size == 0 or u.size == 0:
-            return np.zeros(shape, dtype=self.tck[2].dtype)
+            return self.xp.zeros(shape, dtype=self.xp.complex128)
 
         nw = tw.shape[0]
         nu = tu.shape[0]
