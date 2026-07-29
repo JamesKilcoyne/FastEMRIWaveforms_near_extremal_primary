@@ -63,7 +63,7 @@ pex_nex = KerrEccEqFlux_nex(flux_output_convention = "pex")
 def kerrecceqA(a,p,e,x):  # valid on p < plso +9.001
     pisco = get_separatrix(a,np.zeros_like(a),x)
     pLSO = get_separatrix(a,e,x)
-    u,w,y,z = _uwyz_of_apex_kernel(a,p,e,x,pLSO,ALPHA_FLUX,BETA_FLUX)
+    u,w,y,z = _uwyz_of_apex_kernel(a,p,e,x,pLSO)
 
     pn_term_p = 1#_pdot_PN(p,e,pisco,pLSO)
     pn_term_e = 1#_edot_PN(p,e,pisco,pLSO)
@@ -81,7 +81,7 @@ def nex(a,p,e,x):
     
     pisco = get_separatrix(a,np.zeros_like(a),x)
     pLSO = get_separatrix(a,e,x)
-    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,pLSO,ALPHA_FLUX,BETA_FLUX)
+    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,pLSO)
     
     pn_term_p = 1#_pdot_PN(p,e,pisco,pLSO)
     pn_term_e = 1#_edot_PN(p,e,pisco,pLSO)
@@ -102,7 +102,7 @@ def drE(r,a):
 def nex_pedot(a,p,e,x): #Returns the actual rhs used to make traj
     psep = get_separatrix(a,e,x)
     pisco = get_separatrix(a,np.zeros_like(a),x)
-    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,psep,ALPHA_FLUX,BETA_FLUX)
+    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,psep)
 
     pn_term_p = _pdot_PN(p,e,pisco,psep)
     pn_term_e = _edot_PN(p,e,pisco,psep)
@@ -130,7 +130,7 @@ def few_pedot(a,p,e,x): #Returns the actual rhs used to make traj
 def nex_ELdot(a,p,e,x): #Returns the actual rhs used to make traj
     psep = get_separatrix(a,e,x)
     pisco = get_separatrix(a,np.zeros_like(a),x)
-    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,psep,ALPHA_FLUX,BETA_FLUX)
+    u,w,y,z = _uwyz_of_apex_kernel_nex(a,p,e,x,psep)
 
     EdotPN, LdotPN = _PN_alt(p, e)
 
