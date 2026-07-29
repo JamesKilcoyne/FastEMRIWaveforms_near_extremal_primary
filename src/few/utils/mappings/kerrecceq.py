@@ -776,7 +776,7 @@ def kerrecceq_forward_map_nex(
         z[near_extremal] = out[3]
 
     if return_mask:
-        return u, w, y, z, [near, far, near_extremal]
+        return u, w, y, z, near_extremal
     else:
         return u, w, y, z
     
