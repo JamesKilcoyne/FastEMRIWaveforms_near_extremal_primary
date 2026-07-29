@@ -284,3 +284,9 @@ files:
       - algorithm: sha256
         value: 2208e249a068ba69965c1bc3d8e0cf2efe7d77001d52068b9921769f9c5ec927
     tags: [testfile]
+
+  - name: ZNAmps_l10_m10_n92__extremal.h5
+    checksums:
+      - algorithm: sha256
+        value: 99832fc0511cf80b667326e492300091833be5aa97fb8e172244f0c25fe63899
+    tags: [testfile]
