@@ -30,7 +30,7 @@ from ...utils.mappings.kerrecceq import (
     w_of_euz_flux,
     z_of_a,
     z_of_a_nex,
-    w_of_euz_flux_nex,
+    w_of_e_flux_nex,
     _kerrecceq_flux_forward_map_nex,
     apex_of_uwyz_nex,
 
@@ -850,7 +850,8 @@ class KerrEccEqFlux_nex(ODEBase):
 
         self.flux_output_convention = flux_output_convention
 
-        fp = "KerrEccEqFluxData_nex_v2.h5"  
+        fp = "data/KerrEccEqFluxData_nex_v2.h5"
+          # opens the file whereever your CWD is, not where the script is located, for me the file is here relative to my "extra" folder
        # fp = "KerrEccEqFluxData_nex.h5"  
 
         if downsample is None:
@@ -1017,7 +1018,7 @@ class KerrEccEqFlux_nex(ODEBase):
         z = z_of_a_nex(a_in)
         p_sep = _get_separatrix_kernel_inner(a, e, x)
 
-        if w_of_euz_flux_nex(e, 0.0, z) > 1:
+        if w_of_e_flux_nex(e) > 1:
             u_min = u_where_w_is_unity(e, z, kind="flux")
         else:
             u_min = 0.0
