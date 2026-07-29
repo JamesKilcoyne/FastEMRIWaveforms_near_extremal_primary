@@ -82,40 +82,40 @@ class AmplitudeBase(ParallelModuleBase):
         if specific_modes is not None: # if the user has specified modes
             self.num_modes_eval = len(specific_modes)
             if isinstance(specific_modes, self.xp.ndarray):
-                mode_indexes = specific_modes.copy()
+                mode_indices = specific_modes.copy()
                 # Identify requested negative mkn modes, the conjugate relation must be applied at the end
-                conj_mode_mask = mode_indexes >= self.num_teuk_modes
-                mode_indexes[conj_mode_mask] = self.negative_mode_indexes[mode_indexes[conj_mode_mask] - self.num_m_1_up]
+                conj_mode_mask = mode_indices >= self.num_teuk_modes
+                mode_indices[conj_mode_mask] = self.negative_mode_indices[mode_indices[conj_mode_mask] - self.num_m_1_up]
 
             elif isinstance(specific_modes, list):
                 specific_modes_arr = self.xp.asarray(specific_modes)
-                mode_indexes = self.special_index_map_arr[
+                mode_indices = self.special_index_map_arr[
                     specific_modes_arr[:, 0],
                     m_mode_sign * specific_modes_arr[:, 1],  # may need fix for array mode index input?
                     specific_modes_arr[:, 2],
                     specific_modes_arr[:, 3],
                 ] # find locations of the modes in the special index map array
-                if self.xp.any(mode_indexes == -1):
+                if self.xp.any(mode_indices == -1):
                     failed_mode = specific_modes_arr[
-                        self.xp.where(mode_indexes == -1)[0][0]
+                        self.xp.where(mode_indices == -1)[0][0]
                     ]
                     raise ValueError(
                         f"Could not find mode index ({failed_mode[0]},{failed_mode[1]},{failed_mode[2]},{failed_mode[3]})."
                     )
             else:
-                mode_indexes = specific_modes
+                mode_indices = specific_modes
         else: # if the user has not specified modes
             if m_mode_sign < 0: # check to see whether xI is negative
-                mode_indexes = self.negative_mode_indexes # if so, use negative m-modes. Note this is defined in SphericalHarmonic base class
-                conj_mode_mask = self.xp.ones_like(mode_indexes, dtype=bool) # Identify requested negative mkn modes
+                mode_indices = self.negative_mode_indices # if so, use negative m-modes. Note this is defined in SphericalHarmonic base class
+                conj_mode_mask = self.xp.ones_like(mode_indices, dtype=bool) # Identify requested negative mkn modes
 
             else:
-                mode_indexes = self.mode_indexes
-                conj_mode_mask = self.xp.zeros_like(mode_indexes, dtype=bool) # Identify requested negative mkn modes
+                mode_indices = self.mode_indices
+                conj_mode_mask = self.xp.zeros_like(mode_indices, dtype=bool) # Identify requested negative mkn modes
             self.num_modes_eval = self.num_teuk_modes
 
         
-        teuk_modes = self.get_amplitudes(a, p, e, xI, *args, specific_modes=mode_indexes, **kwargs)
+        teuk_modes = self.get_amplitudes(a, p, e, xI, *args, specific_modes=mode_indices, **kwargs)
 
         if not isinstance(specific_modes, list):
             # apply xI flip symmetry
@@ -125,7 +125,7 @@ class AmplitudeBase(ParallelModuleBase):
             if self.xp.any(conj_mode_mask):
                 # apply +/- m symmetry
                 teuk_modes[:, conj_mode_mask] = (
-                    (-1) ** (self.l_arr + self.k_arr)[mode_indexes[conj_mode_mask]]
+                    (-1) ** (self.l_arr + self.k_arr)[mode_indices[conj_mode_mask]]
                     * self.xp.conj(teuk_modes[:, conj_mode_mask])
                 )
             

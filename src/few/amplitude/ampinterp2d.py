@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 import h5py
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
+from numba import njit
 
 # Cython/C++ imports
 # Python imports
@@ -410,7 +411,232 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
 
         return Amp_z
 
+class AmpInterpKerrEccEqv2(AmplitudeBase, KerrEccentricEquatorialv2):
+    """Calculate Teukolsky amplitudes in the Kerr eccentric equatorial regime with a bicubic spline + linear
+    interpolation scheme.
 
+    When called with arguments :math:`(a, p, e, xI)`, these parameters are transformed into a set of
+    interpolation coordinates and the bicubic spline interpolant is evaluated at these coordinates for
+    all sets of coefficients. To interpolate in the :math"`a` direction, the bicubic spline is evaluated at
+    the adjacent grid points and a linear interpolation is performed.
+
+    This module is available for GPU and CPU.
+
+    args:
+        fp: The coefficients file name in `file_directory`.
+        **kwargs: Optional keyword arguments for the base classes:
+            :class:`few.utils.baseclasses.AmplitudeBase`,
+            :class:`few.utils.baseclasses.KerrEccentricEquatorialv2`.
+    """
+
+    filename: str
+
+    spin_information_holder_A: list[AmpInterp2D]
+
+    z_values: np.ndarray
+
+    def __init__(
+        self,
+        filename: Optional[str] = None,
+        downsample_Z=1,
+        force_backend: BackendLike = None,
+        **kwargs,
+    ):
+        AmplitudeBase.__init__(self)
+
+        self.filename = (
+            "ZNAmps_l10_m10_n55_DS2Outer_reduced.h5" if filename is None else filename
+        )
+
+        from few import get_file_manager
+
+        file_path = get_file_manager().get_file(self.filename)
+
+        with h5py.File(file_path, "r") as f:
+            mode_indices = f["modes"]["mode_indices"][()]
+
+        KerrEccentricEquatorialv2.__init__(self, mode_indices=mode_indices, force_backend=force_backend, **kwargs)
+
+        with h5py.File(file_path, "r") as f:
+            regionA = f["regionA"]
+            coeffsA = regionA["CoeffsRegionA"][()]
+            w_knots = regionA["w_knots"][()]
+            u_knots = regionA["u_knots"][()]
+            z_knots = regionA["z_knots"][()]
+            # paramsA = regionA["ParamsRegionA"][()]
+
+            z_knots = z_knots[::downsample_Z]
+            coeffsA = coeffsA[::downsample_Z]
+
+            self.spin_information_holder_A = [
+                self.build_with_same_backend(
+                    AmpInterp2D,
+                    args=[
+                        w_knots,
+                        u_knots,
+                        coeffsA[i],
+                        self.l_arr,
+                        self.m_arr,
+                        self.mode_arr[:, 2],
+                        self.mode_arr[:, 3],
+                    ],
+                )
+                for i in range(z_knots.size)
+            ]
+
+            try:
+                regionB = f["regionB"]
+                coeffsB = regionB["CoeffsRegionB"][()]
+
+                w_knots = regionB["w_knots"][()]
+                u_knots = regionB["u_knots"][()]
+                z_knots = regionB["z_knots"][()]
+
+                z_knots = z_knots[::downsample_Z]
+
+                coeffsB = coeffsB[::downsample_Z]
+
+                self.spin_information_holder_B = [
+                    self.build_with_same_backend(
+                        AmpInterp2D,
+                        args=[
+                            w_knots,
+                            u_knots,
+                            coeffsB[i],
+                            self.l_arr,
+                            self.m_arr,
+                            self.mode_arr[:, 2],
+                            self.mode_arr[:, 3],
+                        ],
+                    )
+                    for i in range(z_knots.size)
+                ]
+            except KeyError:
+                pass
+
+        self.z_values = z_knots
+
+    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):
+        z_out = self.xp.zeros(
+            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
+        )
+
+        if self.xp.any(region_A_mask):
+            z_out[region_A_mask, :] = self.spin_information_holder_A[index](
+                w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
+            )
+
+        if self.xp.any(~region_A_mask):
+            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
+                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
+            )
+
+        return z_out
+
+    def get_amplitudes(
+        self,
+        a: float,
+        p: Union[float, np.ndarray],
+        e: Union[float, np.ndarray],
+        xI: Union[float, np.ndarray],
+        specific_modes: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """
+        Generate Teukolsky amplitudes for a given set of parameters.
+
+        Args:
+            a: Dimensionless spin parameter of MBH.
+            p: Dimensionless semi-latus rectum.
+            e: Eccentricity.
+            xI: Cosine of orbital inclination. Only :math:`|x_I| = 1` is currently supported.
+            specific_modes: Indices of modes to be generated (optional; defaults to all modes).
+        Returns:
+            An array of complex mode amplitudes.
+        """
+        if specific_modes is None:
+            specific_modes = self.xp.arange(self.num_teuk_modes)
+
+        assert self.xp.all(a == a[0]), "All spins must be the same value."
+        assert self.xp.all(a * xI <= 0.0) or self.xp.all(
+            a * xI >= 0.0
+        )  # either all prograde or all retrograde
+        assert self.xp.all(self.xp.abs(xI) == 1.0)  # all equatorial
+
+        xI_in = self.xp.ones_like(p) * xI
+
+        signed_spin = a * xI_in
+        a_in = self.xp.ones(p.size) * signed_spin
+        xI_in = self.xp.abs(xI_in)
+
+        try:
+            u, w, y, z, region_mask = kerrecceq_forward_map(
+                a_in.get(),
+                p.get(),
+                e.get(),
+                xI_in.get(),
+                return_mask=True,
+                kind="amplitude",
+            )
+
+        except AttributeError:
+            u, w, y, z, region_mask = kerrecceq_forward_map(
+                a_in,
+                p,
+                e,
+                xI_in,
+                return_mask=True,
+                kind="amplitude",
+            )
+        z_check = z[0].item()
+
+        region_mask = self.xp.asarray(region_mask)
+        u = self.xp.asarray(u)
+        w = self.xp.asarray(w)
+        z = self.xp.asarray(z)
+        self.z_values = self.xp.asarray(self.z_values)
+
+        for elem in [u, w, z]:
+            if self.xp.any((elem < 0) | (elem > 1)):
+                raise ValueError("Amplitude interpolant accessed out-of-bounds.")
+
+        if z_check in self.z_values:
+            try:
+                ind_1 = self.xp.where(self.z_values == z_check)[0].get()[0]
+            except AttributeError:
+                ind_1 = self.xp.where(self.z_values == z_check)[0][0]
+
+            Amp_z = self._evaluate_interpolant_at_index(
+                ind_1, region_mask, w, u, mode_indexes=specific_modes
+            )
+
+        else:
+            try:
+                ind_above = self.xp.where(self.z_values > z_check)[0].get()[0]
+            except AttributeError:
+                ind_above = self.xp.where(self.z_values > z_check)[0][0]
+            ind_below = ind_above - 1
+            assert ind_above < len(self.z_values)
+            assert ind_below >= 0
+
+            z_above = self.z_values[ind_above]
+            Amp_above = self._evaluate_interpolant_at_index(
+                ind_above, region_mask, w, u, specific_modes
+            )
+
+            z_below = self.z_values[ind_below]
+            Amp_below = self._evaluate_interpolant_at_index(
+                ind_below, region_mask, w, u, specific_modes
+            )
+
+            Amp_z = ((Amp_above - Amp_below) / (z_above - z_below)) * (
+                z_check - z_below
+            ) + Amp_below
+
+        return Amp_z
+
+"""
+NOTE for James: Use the class above as a template for how to incorporate arbitrary mode indices into the interpolated amplitude class.
+"""
 class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
     """Calculate Teukolsky amplitudes in the Kerr eccentric equatorial regime with a bicubic spline + linear
     interpolation scheme.

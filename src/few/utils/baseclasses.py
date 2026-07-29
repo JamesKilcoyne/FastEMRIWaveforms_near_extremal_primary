@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import types
 from typing import Optional, Sequence, TypeVar, Union
+from abc import ABC, abstractmethod
 
 import numpy as np
 
@@ -339,17 +340,17 @@ class SphericalHarmonic(ParallelModuleBase):
 
         # TODO make this more efficient
         # mode indices for all positive m-modes
-        self.mode_indexes = self.xp.linspace(
+        self.mode_indices = self.xp.linspace(
             0, self.num_teuk_modes - 1, self.num_teuk_modes, dtype=int
         )
         # mode indices for all negative m-modes
-        self.negative_mode_indexes = self.xp.linspace(
+        self.negative_mode_indices = self.xp.linspace(
             0, self.num_teuk_modes - 1, self.num_teuk_modes, dtype=int
         )
         for i, (l, m, k, n) in enumerate(
             zip(self.l_arr_no_mask, self.m_arr_no_mask, self.k_arr_no_mask, self.n_arr_no_mask)
         ):
-            self.negative_mode_indexes[i] = self.special_index_map[
+            self.negative_mode_indices[i] = self.special_index_map[
                 (l.item(), -m.item(), k.item(), n.item())
             ]
 
@@ -407,6 +408,322 @@ class SphericalHarmonic(ParallelModuleBase):
         if np.any(abs(xI) > 1.0):
             raise ValueError("Members of xI array have a magnitude greater than one.")
 
+
+class ModeIndicesLMBase(ABC, ParallelModuleBase):
+    r"""Class for sorting (l,m) mode indices.
+    """
+    lmax: int
+    """Maximum l value for the model."""
+
+    mmax: int
+    """Maximum m value for the model."""
+
+    num_modes: int
+    """Total number of modes in the model"""
+
+    num_stored_modes: int
+    """Number of stored complex waveform modes in the model."""
+
+    m0sort: xp_ndarray
+    """1D Array of sorted mode indices with m=0 first, then m<0, then m>0."""
+
+    mode_arr_no_mask: xp_ndarray
+    """2D Array of mode indices before masking."""
+
+    l_arr_no_mask: xp_ndarray
+    """1D Array of l values for each mode before masking."""
+    m_arr_no_mask: xp_ndarray
+    """1D Array of m values for each mode before masking."""
+
+    m0mask: xp_ndarray
+    """1D Array Mask for m == 0."""
+
+    num_m_zero_up: int
+    """Number of modes with m >= 0."""
+    num_m0: int
+    """Number of modes with m == 0."""
+    num_m_1_up: int
+    """Number of modes with m > 0."""
+
+    mode_arr: xp_ndarray
+    """2D Array of mode indices including negative m modes."""
+
+    l_arr: xp_ndarray
+    """1D Array of l values for each mode."""
+    m_arr: xp_ndarray
+    """1D Array of m values for each mode."""
+
+    m_zero_up_mask: xp_ndarray
+    """1D Mask for m >= 0."""
+
+    unique_l: xp_ndarray
+    """1D Array of unique l values."""
+    unique_m: xp_ndarray
+    """1D Array of unique m values."""
+    num_unique_lm: int
+    """Number of unique (l,m) values."""
+    
+    def __init__(self, mode_indices: xp_ndarray, force_backend: BackendLike = None):
+        ParallelModuleBase.__init__(self, force_backend=force_backend)
+
+        self.modemax = self.xp.max(mode_indices, axis=0)
+
+        self.lmax = self.modemax[0]
+        self.mmax = self.modemax[1]
+
+        # total number of modes in the model
+        self.num_modes = len(mode_indices)
+        self.num_stored_modes = self.num_modes
+        self.num_teuk_modes = self.num_modes
+
+        # mask for m == 0
+        m0mask = self.xp.array(
+            [
+                mode[1] == 0
+                for mode in mode_indices
+            ]
+        )
+
+        # sorts so that order is m=0, m<0, m>0
+        self.m0sort = m0sort = self.xp.concatenate(
+            [
+                self.xp.arange(self.num_stored_modes)[m0mask],
+                self.xp.arange(self.num_stored_modes)[~m0mask],
+            ]
+        )
+
+        # check that the mode indices are already sorted by m=0, m<0, m>0. If not, raise an error.
+        md = self.xp.asarray(mode_indices).T[:, m0sort].astype(self.xp.int32)
+        assert self.xp.all(mode_indices == md.T), "Mode indices must be sorted by m=0, m<0, m>0. Currently they are not."
+
+        self.mode_arr_no_mask = md.T
+
+        # store l m and n values
+        self.l_arr_no_mask = self.mode_arr_no_mask[:, 0]
+        self.m_arr_no_mask = self.mode_arr_no_mask[:, 1]
+
+        # store the mask as m != 0 is True
+        self.m0mask = self.m_arr_no_mask != 0
+
+        # number of m >= 0
+        self.num_m_zero_up = len(self.m_arr_no_mask)
+
+        # number of m == 0
+        self.num_m0 = len(self.xp.arange(self.num_stored_modes)[m0mask])
+
+        # number of m > 0
+        self.num_m_1_up = self.num_m_zero_up - self.num_m0
+
+        mode_sign = [1] * len(md)
+        mode_sign[1] = -1
+
+        # create final arrays to include -m modes
+        self.mode_arr = self.xp.asarray(
+            [self.xp.concatenate([mode, sign*mode[self.m0mask]]) for mode, sign in zip(md, mode_sign)]
+        ).T
+        
+        self.l_arr = self.mode_arr[:, 0]
+        self.m_arr = self.mode_arr[:, 1]
+
+        # mask for m >= 0
+        self.m_zero_up_mask = self.m_arr >= 0
+
+        # find unique sets of (l,m)
+        # create inverse array to build full (l,m,n) from unique l and m
+        # also adjust for cupy
+        if self.backend.uses_cupy:
+            temp, self.inverse_lm = np.unique(
+                np.asarray([self.l_arr.get(), self.m_arr.get()]).T,
+                axis=0,
+                return_inverse=True,
+            )
+        else:
+            temp, self.inverse_lm = np.unique(
+                np.asarray([self.l_arr, self.m_arr]).T, axis=0, return_inverse=True
+            )
+
+        # unique values of l and m
+        unique_l, unique_m = self.xp.asarray(temp).T
+        self.unique_l = unique_l
+        self.unique_m = unique_m
+
+        # number of unique values
+        self.num_unique_lm = len(self.unique_l)
+
+        # TODO make this more efficient
+        # mode indices for all positive m-modes
+        self.mode_indices = self.xp.linspace(
+            0, self.num_stored_modes - 1, self.num_stored_modes, dtype=int
+        )
+
+         # creates special maps to the modes
+        self.index_map_m_positive = {}
+        self.index_map_m_negative = {}
+        self.special_index_map = {}  # maps the minus m values to positive m
+        
+        special_index_shape = self.modemax.copy()
+        special_index_shape[:2] += 1
+        special_index_shape[2:] = special_index_shape[2:] * 2 + 1
+        self.index_map_m_positive_arr = (
+            self.xp.zeros(
+                tuple(special_index_shape),
+                dtype=self.xp.int32,
+            )
+            - 1
+        )
+        self.index_map_m_negative_arr = (
+            self.xp.zeros(
+                tuple(special_index_shape),
+                dtype=self.xp.int32,
+            )
+            - 1
+        )
+        self.special_index_map_arr = (
+            self.xp.zeros(
+                tuple(special_index_shape),
+                dtype=self.xp.int32,
+            )
+            - 1
+        )
+
+        for i, mode in enumerate(self.mode_arr_no_mask):
+            try:
+                mode = mode.get() # get the mode values if using cupy
+            except AttributeError:
+                pass
+
+            # regular index to mode tuple
+            self.index_map_m_positive[tuple(mode)] = i
+            self.index_map_m_positive_arr[tuple(mode)] = i
+
+            self.special_index_map[tuple(mode)] = i
+            self.special_index_map_arr[tuple(mode)] = i
+
+            neg_mode = mode.copy()
+            neg_mode[1:] *= -1
+            if mode[1] > 0:
+                self.index_map_m_negative[tuple(neg_mode)] = i
+                self.index_map_m_negative_arr[tuple(neg_mode)] = i
+
+                self.special_index_map[tuple(neg_mode)] = i
+                self.special_index_map_arr[tuple(neg_mode)] = i
+            else:
+                self.index_map_m_negative[tuple(neg_mode)] = i
+                self.index_map_m_negative_arr[tuple(neg_mode)] = i
+
+        negative_mode_arr = md.copy()
+        negative_mode_arr[1] *= -1
+        # mode indices for all negative m-modes
+        self.negative_mode_indices = self.special_index_map_arr[tuple(negative_mode_arr)]
+
+    @property
+    @abstractmethod
+    def mode_labels(self) -> list[str]:
+        """Returns a list of the mode labels for the model."""
+        raise NotImplementedError
+    
+    @property
+    def num_mode_labels(self) -> int:
+        """Returns the number of mode labels for the model."""
+        return len(self.mode_labels)
+
+    @property
+    def maximum_mode_numbers(self) -> list[int]:
+        """Returns a list of the maximum mode numbers for each mode label."""
+        return list(self.modemax)
+    
+    @property
+    def modes(self) -> xp_ndarray:
+        """Returns a 2D array of the modes available in the model."""
+        return self.mode_arr
+
+    def get_mode_indices(
+            self,
+            specific_modes: Optional[Union[list, xp_ndarray]] = None,
+        ) -> xp_ndarray:
+        """Returns the mode indices corresponding to the input specific modes. If specific_modes is None, 
+        returns all mode indices.
+        Args:
+            specific_modes: List or array of mode tuples (l, m, ...) or mode indices to be generated. If None, 
+            all modes are generated. Can either be a 1D array of mode indices (i1, i2, i3, ...) where i1 is the 
+            index of the first mode (l[i1], m[i1], ...), i2 is the index of the second mode 
+            (l[i2], m[i2], ...), etc. Or a 2D array of mode tuples [[l1, m1, ...], [l2, m2, ...], ...].
+            
+        Returns:
+            Array of mode indices corresponding to the input specific modes."""
+        
+        if specific_modes is None: # if the user has specified modes
+            mode_indices = self.mode_indices.copy()
+        else:
+            specific_modes_arr = self.xp.asarray(specific_modes)
+
+            if specific_modes_arr.ndim == 1:
+                mode_indices = specific_modes_arr.copy()
+                # Identify requested negative mkn modes, the conjugate relation must be applied at the end
+                negative_mode_mask = mode_indices >= self.num_stored_modes
+                mode_indices[negative_mode_mask] = self.negative_mode_indices[mode_indices[negative_mode_mask] - self.num_m_1_up]
+
+            elif specific_modes_arr.ndim == 2:
+                specific_modes_arr_indices = specific_modes_arr.copy()
+                specific_modes_arr_indices[:, 2:] += self.modemax[2:] # adjust values to account for negative modes
+                if self.xp.any(specific_modes_arr_indices[:, 2:] < 0):
+                    failed_mode = specific_modes_arr[
+                        self.xp.where(specific_modes_arr_indices[:, 2:] < 0)[0][0]
+                    ]
+                    raise ValueError(
+                        f"Could not find mode {failed_mode}."
+                    )
+                mode_indices = self.special_index_map_arr[
+                    tuple(specific_modes_arr.T),
+                ] # find locations of the modes in the special index map array
+                if self.xp.any(mode_indices == -1):
+                    failed_mode = specific_modes_arr[
+                        self.xp.where(mode_indices == -1)[0][0]
+                    ]
+                    raise ValueError(
+                        f"Could not find mode {failed_mode}."
+                    )
+            else:
+                ValueError("specific_modes is greater than 3 dimensions")
+
+        return mode_indices
+
+class ModeIndicesLMKN(ModeIndicesLMBase):
+    r"""Class for sorting (l,m,k,n) mode indices.
+    """
+
+    kmax: int
+    """Maximum k value for the model. Currently always 0 for equatorial orbits."""
+
+    nmax: int
+    """Maximum n value for the model."""
+
+    k_arr_no_mask: xp_ndarray
+    """1D Array of k values for each mode before masking."""
+    n_arr_no_mask: xp_ndarray
+    """1D Array of n values for each mode before masking."""
+
+    k_arr: xp_ndarray
+    """1D Array of k values for each mode."""
+    n_arr: xp_ndarray
+    """1D Array of n values for each mode."""
+
+    def __init__(self, mode_indices: xp_ndarray, force_backend: BackendLike = None):
+        ModeIndicesLMBase.__init__(self, mode_indices=mode_indices, force_backend=force_backend)
+
+        self.kmax = self.modemax[2]
+        self.nmax = self.modemax[3]
+
+        self.k_arr_no_mask = self.mode_arr_no_mask[:, 2] # k is always 0 for equatorial orbits
+        self.n_arr_no_mask = self.mode_arr_no_mask[:, 3] # n is always 0 for non-eccentric orbits
+
+        self.k_arr = self.mode_arr[:, 2]
+        self.n_arr = self.mode_arr[:, 3]
+
+    @property
+    def mode_labels(self):
+        """Returns a list of the mode labels for the model."""
+        return ["l", "m", "k", "n"]
 
 class SchwarzschildEccentric(SphericalHarmonic):
     """
@@ -514,6 +831,156 @@ class SchwarzschildEccentric(SphericalHarmonic):
         return a, xI
 
 
+class KerrEccentricEquatorialBase:
+    """
+    Kerr eccentric equatorial base class.
+    """
+
+    background: str = "Kerr"
+    """The spacetime background for this model."""
+
+    descriptor: str = "eccentric equatorial"
+    """Description of the inspiral trajectory properties for this model."""
+
+    frame: str = "source"
+    """Frame in which source is generated. Is source frame."""
+
+    needs_Y: bool = False
+    """If True, model expects inclination parameter Y (rather than xI)."""
+
+    def __init__(
+        self
+    ):
+       pass
+
+    def sanity_check_init(
+        self, m1: float, m2: float, a: float, p0: float, e0: float, xI: float
+    ) -> tuple[float, float]:
+        r"""Sanity check initial parameters.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            m1: Massive black hole mass in solar masses.
+            m2: compact object mass in solar masses.
+            a: Dimensionless spin of massive black hole.
+            p0: Initial semilatus rectum (dimensionless)
+                :math:`(10\leq p_0\leq 16 + 2e_0)`. See the documentation for
+                more information on :math:`p_0 \leq 10.0`.
+            e0: Initial eccentricity :math:`(0\leq e_0\leq0.7)`.
+            xI: Initial cosine(inclination) :math:`(|x_I| = 1)`.
+
+        Returns:
+            (a_fix, xI_fix): a and xI in the correct convention (a >= 0).
+
+        Raises:
+            ValueError: If any of the parameters are not allowed.
+
+        """
+        # TODO: update function when grids replaced
+
+        for val, key in [[m1, "m1"], [p0, "p0"], [e0, "e0"], [m2, "m2"]]:
+            test = val < 0.0
+            if test:
+                raise ValueError("{} is negative. It must be positive.".format(key))
+
+        if m1 < m2:
+            raise ValueError(
+                "Massive black hole mass must be larger than the compact object mass. (m1={}, m2={})".format(
+                    m1, m2
+                )
+            )
+
+        if xI < 0:
+            # flip convention
+            get_logger().warning(
+                "Negative inclination detected. Flipping sign of a and xI to match convention."
+            )
+            a = -a
+            xI = -xI
+
+        if a > 0.999:
+            raise ValueError(
+                "Larger black hole spin magnitude above 0.999 is outside of our domain of validity."
+            )
+
+        # transform parameters and check they are within bounds
+        a_sign = a * xI
+        xI_in = abs(xI)
+        grid_coords = kerrecceq_forward_map(a_sign, p0, e0, xI_in)
+
+        if np.isnan(grid_coords[0]):
+            raise ValueError(
+                f"This value of p0 ({p0}) is too close to the separatrix for our model."
+            )
+        elif grid_coords[0] > 1.000001:
+            raise ValueError(
+                f"This value of p0 ({p0}) is outside of our domain of validity."
+            )
+        if grid_coords[1] < -1e-6 or grid_coords[1] > 1.000001:
+            raise ValueError(
+                f"This a ({a}), p0 ({p0}) and e0 ({e0}) combination is outside of our domain of validity."
+            )
+
+        if abs(xI) != 1.0:
+            raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
+
+        return a, xI
+    
+    def sanity_check_viewing_angles(self, theta: float, phi: float):
+        """Sanity check on viewing angles.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            theta (double): Polar viewing angle.
+            phi (double): Azimuthal viewing angle.
+
+        Returns:
+            tuple: (theta, phi). Phi is wrapped.
+
+        Raises:
+            ValueError: If any of the angular values are not allowed.
+
+        """
+        # if theta < 0.0 or theta > np.pi:
+        #    raise ValueError("theta must be between 0 and pi.")
+
+        phi = phi % (2 * np.pi)
+        return (theta, phi)
+
+    def sanity_check_traj(self, a: float, p: np.ndarray, e: np.ndarray, xI: np.ndarray):
+        """Sanity check on parameters output from the trajectory module.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            a: Dimensionless spin of massive black hole.
+            p: Array of semi-latus rectum values produced by
+                the trajectory module.
+            e: Array of eccentricity values produced by
+                the trajectory module.
+            xI: Array of cosine(inclination) values produced by the trajectory module.
+
+        Raises:
+            ValueError: If any of the trajectory points are not allowed.
+            warn: If any points in the trajectory are allowable,
+                but outside calibration region.
+
+        """
+
+        if np.any(e < 0.0):
+            raise ValueError("Members of e array are less than zero.")
+
+        if np.any(p < 0.0):
+            raise ValueError("Members of p array are less than zero.")
+
+        if np.any(abs(a) > 1.0):
+            raise ValueError("Members of a array have a magnitude greater than one.")
+
+        if np.any(abs(xI) > 1.0):
+            raise ValueError("Members of xI array have a magnitude greater than one.")
+    
 class KerrEccentricEquatorial(SphericalHarmonic):
     """
     Kerr eccentric equatorial base class.
@@ -622,8 +1089,117 @@ class KerrEccentricEquatorial(SphericalHarmonic):
             raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
 
         return a, xI
-    
 
+class KerrEccentricEquatorialv2(ModeIndicesLMKN):
+    """
+    Kerr eccentric equatorial base class.
+
+    Args:
+        lmax: Maximum l value for the model. Default is 10.
+        nmax: Maximum n value for the model. Default is 55.
+    """
+
+    background: str = "Kerr"
+    """The spacetime background for this model."""
+
+    descriptor: str = "eccentric equatorial"
+    """Description of the inspiral trajectory properties for this model."""
+
+    frame: str = "source"
+    """Frame in which source is generated. Is source frame."""
+
+    needs_Y: bool = False
+    """If True, model expects inclination parameter Y (rather than xI)."""
+
+    def __init__(
+        self,
+        mode_indices,
+        force_backend: BackendLike = None,
+    ):
+        ModeIndicesLMKN.__init__(
+            self, mode_indices = mode_indices, force_backend=force_backend
+        )
+
+    @classmethod
+    def supported_backends(cls):
+        return cls.GPU_RECOMMENDED()
+
+    def sanity_check_init(
+        self, m1: float, m2: float, a: float, p0: float, e0: float, xI: float
+    ) -> tuple[float, float]:
+        r"""Sanity check initial parameters.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            m1: Massive black hole mass in solar masses.
+            m2: compact object mass in solar masses.
+            a: Dimensionless spin of massive black hole.
+            p0: Initial semilatus rectum (dimensionless)
+                :math:`(10\leq p_0\leq 16 + 2e_0)`. See the documentation for
+                more information on :math:`p_0 \leq 10.0`.
+            e0: Initial eccentricity :math:`(0\leq e_0\leq0.7)`.
+            xI: Initial cosine(inclination) :math:`(|x_I| = 1)`.
+
+        Returns:
+            (a_fix, xI_fix): a and xI in the correct convention (a >= 0).
+
+        Raises:
+            ValueError: If any of the parameters are not allowed.
+
+        """
+        # TODO: update function when grids replaced
+
+        for val, key in [[m1, "m1"], [p0, "p0"], [e0, "e0"], [m2, "m2"]]:
+            test = val < 0.0
+            if test:
+                raise ValueError("{} is negative. It must be positive.".format(key))
+
+        if m1 < m2:
+            raise ValueError(
+                "Massive black hole mass must be larger than the compact object mass. (m1={}, m2={})".format(
+                    m1, m2
+                )
+            )
+
+        if xI < 0:
+            # flip convention
+            get_logger().warning(
+                "Negative inclination detected. Flipping sign of a and xI to match convention."
+            )
+            a = -a
+            xI = -xI
+
+        if a > 0.999:
+            raise ValueError(
+                "Larger black hole spin magnitude above 0.999 is outside of our domain of validity."
+            )
+
+        # transform parameters and check they are within bounds
+        a_sign = a * xI
+        xI_in = abs(xI)
+        grid_coords = kerrecceq_forward_map(a_sign, p0, e0, xI_in)
+
+        if np.isnan(grid_coords[0]):
+            raise ValueError(
+                f"This value of p0 ({p0}) is too close to the separatrix for our model."
+            )
+        elif grid_coords[0] > 1.000001:
+            raise ValueError(
+                f"This value of p0 ({p0}) is outside of our domain of validity."
+            )
+        if grid_coords[1] < -1e-6 or grid_coords[1] > 1.000001:
+            raise ValueError(
+                f"This a ({a}), p0 ({p0}) and e0 ({e0}) combination is outside of our domain of validity."
+            )
+
+        if abs(xI) != 1.0:
+            raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
+
+        return a, xI
+
+# TODO for James: You will want to model this class after the KerrEccentricEquatorialv2 class above, which
+# takes in arbitrary mode indices.
 class KerrEccentricEquatorial_nex(SphericalHarmonic):
     """
     Kerr eccentric equatorial base class.

@@ -57,6 +57,7 @@ dependencies = [
   "requests",                              # To download files automatically
   "rich",                                  # To display downlaod progress bar
   "scipy",
+  "spherical",
   "tqdm",
   "wrapt",
   #@DEPS_CUPYCUDA@,

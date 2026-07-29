@@ -859,8 +859,20 @@ class KerrEccEqFlux_nex(ODEBase):
         downsample_inner = downsample[0]
         downsample_outer = downsample[1]
 
-        #fm = get_file_manager()
-        file_path = fp  #fm.get_file(fp)      Need to update this to handle a proper filepath
+        fm = get_file_manager()
+        file_path = fm.get_file(fp) 
+        """
+        NOTE for James: to make files accessible to the file manager, you need to add the file to `src/few/data` and update `src/few/files/registry.yml` with the file name and hash.
+        A new registry item will take form:
+        
+        - name: <filename>
+            checksums:
+                - algorithm: sha256
+                  value: <hash>
+            tags: [testfile]
+        
+        To get the hash, run `sha256sum <filename>` in the terminal and copy the hash (first string of the output) into the registry.yml file.
+        """
 
         with h5py.File(file_path, "r") as fluxData:
             regionA = fluxData["regionA"]

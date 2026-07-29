@@ -100,6 +100,9 @@ class SphericalHarmonicWaveformBase(
         self.create_waveform = self.build_with_same_backend(
             sum_module, kwargs=sum_kwargs
         )
+        if Ylm_kwargs is None:
+            Ylm_kwargs = {}
+        Ylm_kwargs["lmax"] = self.amplitude_generator.lmax
         self.ylm_gen = self.build_with_same_backend(GetYlms, kwargs=Ylm_kwargs)
 
         # selecting modes that contribute at threshold to the waveform

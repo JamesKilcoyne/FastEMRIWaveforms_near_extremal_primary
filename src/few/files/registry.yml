@@ -269,3 +269,18 @@ files:
       - algorithm: sha256
         value: a0aa28e9accfd05b8b2aceb6799b471bcb8d1756fb7b0bff61957a985a40c6c1
     tags: [testfile]
+  - name: KerrEccEqFluxData_nex.h5
+    checksums:
+      - algorithm: sha256
+        value: 687b5f24c643ebe63fe0c4efde96e12190e897bc3316c407ee2e6a6ad22effb7
+    tags: [testfile]
+  - name: KerrEccEqFluxData_nex_v2.h5
+    checksums:
+      - algorithm: sha256
+        value: 95b5659edf4adbac6717930f2691132fe2b4b8457d947d04c64e0b2c54072ba2
+    tags: [testfile]
+  - name: ZNAmps_l10_m10_n55_DS2Outer_reduced.h5
+    checksums:
+      - algorithm: sha256
+        value: 2208e249a068ba69965c1bc3d8e0cf2efe7d77001d52068b9921769f9c5ec927
+    tags: [testfile]
