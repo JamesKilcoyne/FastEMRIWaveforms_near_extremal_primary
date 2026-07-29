@@ -107,7 +107,7 @@ def nex_pedot(a,p,e,x): #Returns the actual rhs used to make traj
     pn_term_p = _pdot_PN(p,e,pisco,psep)
     pn_term_e = _edot_PN(p,e,pisco,psep)
 
-    turn = drE(p,a)
+    #turn = drE(p,a)
 
     pdot_interps = pex_nex.pdot_interp_A
     edot_interps = pex_nex.edot_interp_A
