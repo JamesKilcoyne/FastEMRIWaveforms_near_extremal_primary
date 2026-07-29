@@ -18,7 +18,7 @@ import numpy as np
 from ..cutils import Backend
 from ..utils.citations import REFERENCE, Citable
 from ..utils.globals import get_backend, get_first_backend, get_logger
-from ..utils.mappings.kerrecceq import kerrecceq_forward_map
+from ..utils.mappings.kerrecceq import kerrecceq_forward_map, kerrecceq_forward_map_nex
 
 xp_ndarray = TypeVar("xp_ndarray")
 """Generic alias for backend ndarray"""
@@ -1200,9 +1200,9 @@ class KerrEccentricEquatorialv2(ModeIndicesLMKN):
 
 # TODO for James: You will want to model this class after the KerrEccentricEquatorialv2 class above, which
 # takes in arbitrary mode indices.
-class KerrEccentricEquatorial_nex(SphericalHarmonic):
+class KerrEccentricEquatorial_nex(ModeIndicesLMKN):
     """
-    Kerr eccentric equatorial base class.
+    Kerr eccentric equatorial NEAR EXTREMAL base class.
 
     Args:
         lmax: Maximum l value for the model. Default is 10.
@@ -1223,12 +1223,11 @@ class KerrEccentricEquatorial_nex(SphericalHarmonic):
 
     def __init__(
         self,
-        lmax: int = 10,    #WIll PROBABLY NEED TO CHANGE
-        nmax: int = 55,
+        mode_indices,
         force_backend: BackendLike = None,
     ):
-        SphericalHarmonic.__init__(
-            self, lmax=lmax, nmax=nmax, force_backend=force_backend
+        ModeIndicesLMKN.__init__(
+            self, mode_indices = mode_indices, force_backend=force_backend
         )
 
     @classmethod
@@ -1281,15 +1280,19 @@ class KerrEccentricEquatorial_nex(SphericalHarmonic):
             a = -a
             xI = -xI
 
-        if a > 1 - 10**(-12) or a < 0.99:
+        if a > 1-10**(-12):
             raise ValueError(
-                r"Larger black hole spin magnitude below 0.99, or above $1 - 10^{-12}$ is outside of our domain of validity."
+                r"Larger black hole spin magnitude above $1-10^{12}$ is outside of our domain of validity."
+            )
+        if a < 0.99:
+            raise ValueError(
+                r"Larger black hole spin magnitude below 0.99 is outside of our domain of validity."
             )
 
         # transform parameters and check they are within bounds
         a_sign = a * xI
         xI_in = abs(xI)
-        grid_coords = kerrecceq_forward_map(a_sign, p0, e0, xI_in)
+        grid_coords = kerrecceq_forward_map_nex(a_sign, p0, e0, xI_in)
 
         if np.isnan(grid_coords[0]):
             raise ValueError(
@@ -1308,7 +1311,6 @@ class KerrEccentricEquatorial_nex(SphericalHarmonic):
             raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
 
         return a, xI
-
 
 
 class KerrGeneric(SphericalHarmonic):
