@@ -33,12 +33,15 @@ from ...utils.mappings.kerrecceq import (
     w_of_e_flux_nex,
     _kerrecceq_flux_forward_map_nex,
     apex_of_uwyz_nex,
+    p_of_u_flux_nex,
+    u_of_p_flux_nex,
 
     AMIN_nex,
     AMAX_nex,
     EMAX_nex,
     PMAX_REGIONC,
-    DELTAPMIN_REGIONC
+    DELTAPMIN_REGIONC,
+    DELTAPMAX_REGIONC
 
 )
 from ...utils.utility import _brentq_jit
@@ -1021,10 +1024,11 @@ class KerrEccEqFlux_nex(ODEBase):
         else:
             u_min = 0.0
 
-        return max(p_of_u_flux(u_min, p_sep), p_sep + self.separatrix_buffer_dist)
+        return max(p_of_u_flux_nex(u_min, p_sep), p_sep + self.separatrix_buffer_dist)
 
     def _max_p(self, e, x, a):
-        return PMAX
+        plso = get_separatrix(a, e, x)
+        return plso+DELTAPMAX_REGIONC
 
     def min_p(self, e=0, x=1, a=0):
         self.isvalid_x(x)
