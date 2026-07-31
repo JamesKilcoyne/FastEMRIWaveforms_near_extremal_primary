@@ -25,7 +25,7 @@ from ..utils.baseclasses import (
 )
 from ..utils.citations import REFERENCE
 from ..utils.geodesic import get_separatrix
-from ..utils.mappings.kerrecceq import kerrecceq_forward_map, kerrecceq_backward_map_nex
+from ..utils.mappings.kerrecceq import kerrecceq_forward_map, kerrecceq_forward_map_nex
 from ..utils.mappings.schwarzecc import schwarzecc_p_to_y
 from .base import AmplitudeBase
 
@@ -282,24 +282,21 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
             except KeyError:
                 pass
 
-        self.z_values = z_knots
+        self.z_values = self.xp.asarray(z_knots)
 
-    def _evaluate_interpolant_at_index(self, index, Region_masks, w, u, mode_indexes):
-
+    def _evaluate_interpolant_at_index(self, index, region_A_mask, w, u, mode_indexes):
         z_out = self.xp.zeros(
-            (Region_masks[0].size, self.num_modes_eval), dtype=self.xp.complex128
+            (region_A_mask.size, self.num_modes_eval), dtype=self.xp.complex128
         )
-
-        region_A_mask, region_B_mask, region_C_mask = Region_masks
 
         if self.xp.any(region_A_mask):
             z_out[region_A_mask, :] = self.spin_information_holder_A[index](
                 w[region_A_mask], u[region_A_mask], mode_indexes=mode_indexes
             )
 
-        if self.xp.any(region_B_mask):
-            z_out[region_B_mask, :] = self.spin_information_holder_B[index](
-                w[region_B_mask], u[region_A_mask], mode_indexes=mode_indexes
+        if self.xp.any(~region_A_mask):
+            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
+                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
             )
 
         return z_out
@@ -364,11 +361,10 @@ class AmpInterpKerrEccEq(AmplitudeBase, KerrEccentricEquatorial):
         u = self.xp.asarray(u)
         w = self.xp.asarray(w)
         z = self.xp.asarray(z)
-        self.z_values = self.xp.asarray(self.z_values)
 
         for elem in [u, w, z]:
             if self.xp.any((elem < 0) | (elem > 1)):
-                raise ValueError("Amplitude interpolant accessed out-of-bounds.")
+                raise ValueError("Amplitude interpolant accessed out-of-bounds with element {0}.".format(elem[(elem < 0) | (elem > 1)][0]))
 
         if z_check in self.z_values:
             try:
@@ -747,9 +743,11 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
             )
 
         if self.xp.any(~region_A_mask):
-            z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
-                w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
-            )
+            print(w,u)
+            raise NotImplementedError("Region B is not implemented in this version of the code.")
+            #z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
+            #    w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
+            #)
 
         return z_out
 
