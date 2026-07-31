@@ -466,7 +466,7 @@ class ModeIndicesLMBase(ABC, ParallelModuleBase):
     def __init__(self, mode_indices: xp_ndarray, force_backend: BackendLike = None):
         ParallelModuleBase.__init__(self, force_backend=force_backend)
 
-        self.modemax = self.xp.max(mode_indices, axis=0)
+        self.modemax = self.xp.max(self.xp.abs(mode_indices), axis=0)
 
         self.lmax = self.modemax[0]
         self.mmax = self.modemax[1]
@@ -563,7 +563,7 @@ class ModeIndicesLMBase(ABC, ParallelModuleBase):
         
         special_index_shape = self.modemax.copy()
         special_index_shape[:2] += 1
-        special_index_shape[2:] = special_index_shape[2:] * 3 + 1    #### When building index_map_m_positive_arr below, if htis was *2, it wouldnt be big enough to hold eg modes with n=-240
+        special_index_shape[2:] = special_index_shape[2:] * 2 + 1 
         self.index_map_m_positive_arr = (
             self.xp.zeros(
                 tuple(special_index_shape),
