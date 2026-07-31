@@ -4,6 +4,7 @@ import os
 from typing import Generic, Optional, Union
 
 import numpy as np
+import h5py
 
 from ..amplitude.ampinterp2d import AmpInterpKerrEccEq, AmpInterpSchwarzEcc, AmpInterpKerrEccEq_nex
 from ..amplitude.romannet import RomanAmplitude
@@ -581,15 +582,18 @@ class FastKerrEccentricEquatorialFlux_nex(
             mode_selector_kwargs = {}
         mode_selection_module = ModeSelector
 
-        KerrEccentricEquatorial_nex.__init__(
-            self,
-            **{
-                key: value
-                for key, value in kwargs.items()
-                if key in ["lmax", "nmax", "ndim"]
-            },
-            force_backend=force_backend,
+        from few import get_file_manager
+        self.filename = (
+            "ZNAmps_l10_m10_n92__extremal.h5" 
         )
+
+        file_path = get_file_manager().get_file(self.filename)
+
+        with h5py.File(file_path, "r") as f:
+            mode_indices = f["modes"]["mode_indices"][()]
+
+        KerrEccentricEquatorial_nex.__init__(self, mode_indices=mode_indices, force_backend=force_backend, **kwargs)
+
         SphericalHarmonicWaveformBase.__init__(
             self,
             inspiral_module=EMRIInspiral,
