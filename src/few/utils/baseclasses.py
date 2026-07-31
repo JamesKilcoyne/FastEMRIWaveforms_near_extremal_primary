@@ -563,7 +563,7 @@ class ModeIndicesLMBase(ABC, ParallelModuleBase):
         
         special_index_shape = self.modemax.copy()
         special_index_shape[:2] += 1
-        special_index_shape[2:] = special_index_shape[2:] * 2 + 1
+        special_index_shape[2:] = special_index_shape[2:] * 3 + 1    #### When building index_map_m_positive_arr below, if htis was *2, it wouldnt be big enough to hold eg modes with n=-240
         self.index_map_m_positive_arr = (
             self.xp.zeros(
                 tuple(special_index_shape),
@@ -1311,6 +1311,60 @@ class KerrEccentricEquatorial_nex(ModeIndicesLMKN):
             raise ValueError("For equatorial orbits, xI must be either 1 or -1.")
 
         return a, xI
+
+    def sanity_check_viewing_angles(self, theta: float, phi: float):
+        """Sanity check on viewing angles.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            theta (double): Polar viewing angle.
+            phi (double): Azimuthal viewing angle.
+
+        Returns:
+            tuple: (theta, phi). Phi is wrapped.
+
+        Raises:
+            ValueError: If any of the angular values are not allowed.
+
+        """
+        # if theta < 0.0 or theta > np.pi:
+        #    raise ValueError("theta must be between 0 and pi.")
+
+        phi = phi % (2 * np.pi)
+        return (theta, phi)
+
+    def sanity_check_traj(self, a: float, p: np.ndarray, e: np.ndarray, xI: np.ndarray):
+        """Sanity check on parameters output from the trajectory module.
+
+        Make sure parameters are within allowable ranges.
+
+        args:
+            a: Dimensionless spin of massive black hole.
+            p: Array of semi-latus rectum values produced by
+                the trajectory module.
+            e: Array of eccentricity values produced by
+                the trajectory module.
+            xI: Array of cosine(inclination) values produced by the trajectory module.
+
+        Raises:
+            ValueError: If any of the trajectory points are not allowed.
+            warn: If any points in the trajectory are allowable,
+                but outside calibration region.
+
+        """
+
+        if np.any(e < 0.0):
+            raise ValueError("Members of e array are less than zero.")
+
+        if np.any(p < 0.0):
+            raise ValueError("Members of p array are less than zero.")
+
+        if np.any(abs(a) > 1.0):
+            raise ValueError("Members of a array have a magnitude greater than one.")
+
+        if np.any(abs(xI) > 1.0):
+            raise ValueError("Members of xI array have a magnitude greater than one.")
 
 
 class KerrGeneric(SphericalHarmonic):
