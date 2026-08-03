@@ -28,7 +28,8 @@ DELTAPMIN_REGIONB = 9
 
 #Parameters for region C (near-extremal region)
 
-DELTAPMIN_REGIONC = 10**(-1.625)             ## may change
+DELTAPMIN_REGIONC = 10**(-1.625)           
+DELTAPMIN_REGIONC_amp= 10**(-2)
 DELTAPMAX_nex = 10
 DELTAPMAX_REGIONC = DELTAPMAX_nex     #redundant
 PMAX_REGIONC = 11
@@ -588,15 +589,15 @@ def u_of_p_flux_nex(p,pLSO):
     return num/den
 
 @njit
-def u_of_p_nex(p,pLSO):
-    num = np.log10(p-pLSO) - np.log10(DELTAPMIN_REGIONC)
-    den = np.log10(DELTAPMAX_REGIONC) - np.log10(DELTAPMIN_REGIONC)
+def u_of_p_nex(p,pLSO, deltapmin):
+    num = np.log10(p-pLSO) - np.log10(deltapmin)
+    den = np.log10(DELTAPMAX_REGIONC) - np.log10(deltapmin)
     return num/den
 
 
 @njit
-def p_of_u_nex(u,pLSO):
-    return 10**(u*(np.log10(DELTAPMAX_REGIONC)-np.log10(DELTAPMIN_REGIONC)) + np.log10(DELTAPMIN_REGIONC))+pLSO
+def p_of_u_nex(u,pLSO, deltapmin):
+    return 10**(u*(np.log10(DELTAPMAX_REGIONC)-np.log10(deltapmin)) + np.log10(deltapmin))+pLSO
 
 @njit
 def p_of_u_flux_nex(u,pLSO):
@@ -653,9 +654,10 @@ def _uwyz_of_apex_kernel_nex(
     p,
     e,
     x,
-    pLSO
+    pLSO,
+    deltapmin
 ):
-    u = u_of_p_nex(p, pLSO,)
+    u = u_of_p_nex(p, pLSO, deltapmin)
     y = y_of_x(x)
     z = z_of_a_nex(a)
     w = w_of_e_nex(e)
@@ -666,7 +668,8 @@ def apex_of_uwyz_nex(
     u,
     w,
     y,
-    z
+    z,
+    deltapmin
 ):
     a = a_of_z_nex(z)
     x = x_of_y(y)
@@ -677,12 +680,9 @@ def apex_of_uwyz_nex(
     x_in[x_in == 0] = 1
 
     pLSO = get_separatrix(a_in, e, x_in)
-    p = p_of_u_nex(u, pLSO)
+    p = p_of_u_nex(u, pLSO,deltapmin)
 
     return a, p, e, x
-
-
-#hack fix the forward and backward maps
 
 @njit
 def _kerrecceq_flux_forward_map_nex(
@@ -697,7 +697,7 @@ def _kerrecceq_flux_forward_map_nex(
     """
 
 
-    return *_uwyz_of_apex_kernel_nex(a, p, e, xI, pLSO), "RegionC"
+    return *_uwyz_of_apex_kernel_nex(a, p, e, xI, pLSO,DELTAPMIN_REGIONC), "RegionC"
 
 
 def kerrecceq_forward_map_nex(
@@ -720,10 +720,12 @@ def kerrecceq_forward_map_nex(
         is_flux = True
         alpha = ALPHA_FLUX_nex
         beta = BETA_FLUX_nex
+        deltapmin = DELTAPMIN_REGIONC
     elif kind == "amplitude":
         is_flux = False
         alpha = ALPHA_AMP_nex
         beta = BETA_AMP_nex
+        deltapmin = DELTAPMIN_REGIONC_amp
     else:
         raise ValueError
 
@@ -749,30 +751,20 @@ def kerrecceq_forward_map_nex(
 
     # handle regions A and B and C
 
-    near = (p <= (pLSO + DELTAPMAX)*0) & (a<= AMAX)        #change near and far so that they are enver true, quickfix
+    near = (p <= (pLSO + DELTAPMAX)*0) & (a< AMAX_nex)        #change near and far so that they are enver true, quickfix
     far = (p> (pLSO+DELTAPMAX)*1000) & (p<=PMAX_REGIONB)
     near_extremal = (p <= pLSO + DELTAPMAX_nex)  & (a>=AMIN_nex)
 
 
     if xp.any(near):
-        out = _uwyz_of_apex_kernel(
-            a[near], p[near], e[near], xI[near], pLSO[near], alpha, beta
-        )
-        u[near] = out[0]
-        w[near] = out[1]
-        y[near] = out[2]
-        z[near] = out[3]
+        raise ValueError
 
     if xp.any(far):
-        out = _UWYZ_of_apex_kernel(a[far], p[far], e[far], xI[far], pLSO[far], is_flux)
-        u[far] = out[0]
-        w[far] = out[1]
-        y[far] = out[2]
-        z[far] = out[3]
+        raise ValueError
 
 
     if xp.any(near_extremal):
-        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal]) 
+        out = _uwyz_of_apex_kernel_nex(a[near_extremal], p[near_extremal], e[near_extremal], xI[near_extremal], pLSO[near_extremal],deltapmin) 
         u[near_extremal] = out[0]
         w[near_extremal] = out[1]
         y[near_extremal] = out[2]
@@ -804,15 +796,17 @@ def kerrecceq_backward_map_nex(
     if is_flux:
         alpha = ALPHA_FLUX_nex
         beta = BETA_FLUX_nex
+        deltapmin = DELTAPMIN_REGIONC
     elif is_amp:
         alpha = ALPHA_AMP_nex
         beta = BETA_AMP_nex
+        deltapmin = DELTAPMIN_REGIONC_amp
     else:
         raise ValueError
     
     # if scalar directly evaluate the kernel for speed
     if not hasattr(u, "__len__"):
-        return apex_of_uwyz_nex(u, w, y, z)
+        return apex_of_uwyz_nex(u, w, y, z,deltapmin)
     
     # else, we have multiple points
     u = xp.atleast_1d(xp.asarray(u))
@@ -820,4 +814,4 @@ def kerrecceq_backward_map_nex(
     y = xp.atleast_1d(xp.asarray(y))
     z = xp.atleast_1d(xp.asarray(z))
     
-    return apex_of_uwyz_nex(u, w, y, z)
+    return apex_of_uwyz_nex(u, w, y, z,deltapmin)

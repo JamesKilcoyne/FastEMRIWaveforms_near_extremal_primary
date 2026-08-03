@@ -886,7 +886,7 @@ class KerrEccEqFlux_nex(ODEBase):
                 np.meshgrid(u, w, z, indexing="ij")
             ).reshape(3, -1)
             agrid, pgrid, egrid, xgrid = apex_of_uwyz_nex(
-                ugrid, wgrid, np.ones_like(zgrid), zgrid
+                ugrid, wgrid, np.ones_like(zgrid), zgrid, DELTAPMIN_REGIONC
             )
 
             # normalise by PN contribution
@@ -1151,7 +1151,7 @@ class KerrEccEqFlux_nex(ODEBase):
         u, w, _, z, in_region_A = _kerrecceq_flux_forward_map_nex(a_in, p, e, 1.0, pLSO)
 
         if u < edge_buffer or u > 1 - edge_buffer or np.isnan(u):
-            raise ValueError("Interpolation: p out of bounds.")
+            raise ValueError(f"Interpolation: p out of bounds with {p}.")
         if w < edge_buffer:
             raise TrajectoryOffGridException("Interpolation: e out of bounds.")
         if w > 1 - edge_buffer:
