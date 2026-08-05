@@ -846,9 +846,33 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
                 ind_below, region_mask, w, u, specific_modes
             )
 
-            Amp_z = ((Amp_above - Amp_below) / (z_above - z_below)) * (
-                z_check - z_below
-            ) + Amp_below
+            if ind_above <= 1 or ind_below >= len(self.z_values) - 1:
+                Amp_z = ((Amp_above - Amp_below) / (z_above - z_below)) * (
+                    z_check - z_below
+                ) + Amp_below
+            else:
+                ind_above_2 = ind_above + 1
+                ind_below_2 = ind_below - 1
+
+                Amp_above_2 = self._evaluate_interpolant_at_index(
+                    ind_above_2, region_mask, w, u, specific_modes
+                )
+
+                Amp_below_2 = self._evaluate_interpolant_at_index(
+                    ind_below_2, region_mask, w, u, specific_modes
+                )
+
+                t = (z_check - z_below) / (z_above - z_below)
+
+                w0 = 0.5 * (-t**3 + 2 * t**2 - t)
+                w1 = 0.5 * (3 * t**3 - 5 * t**2 + 2)
+                w2 = 0.5 * (-3 * t**3 + 4 * t**2 + t)
+                w3 = 0.5 * (t**3 - t**2)
+
+                Amp_z = (w0 * Amp_below_2
+                + w1 * Amp_below
+                + w2 * Amp_above
+                + w3 * Amp_above_2)
 
         return Amp_z
 
