@@ -289,6 +289,13 @@ files:
       - algorithm: sha256
         value: 99832fc0511cf80b667326e492300091833be5aa97fb8e172244f0c25fe63899
     tags: [testfile]
+
+  - name: KerrEccEqFluxData_nex_v3.h5 
+    checksums:
+      - algorithm: sha256
+        value: 9d25db8675b4d49e4b233f7ff3fc104160bf08c7d0fa9e7a82691ff75e7fa8a8
+    tags: [testfile]
+
   - name: ZNAmps_l14_m14_n92_extremal_v2.h5
     checksums:
       - algorithm: sha256

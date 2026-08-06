@@ -661,7 +661,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
         AmplitudeBase.__init__(self)
 
         self.filename = (
-            "ZNAmps_l10_m10_n92__extremal.h5" if filename is None else filename
+            "ZNAmps_l14_m14_n92_extremal_v2.h5" if filename is None else filename
         )
 
         from few import get_file_manager
@@ -743,11 +743,8 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
             )
 
         if self.xp.any(~region_A_mask):
-            print(w,u)
-            raise NotImplementedError("Region B is not implemented in this version of the code.")
-            #z_out[~region_A_mask, :] = self.spin_information_holder_B[index](
-            #    w[~region_A_mask], u[~region_A_mask], mode_indexes=mode_indexes
-            #)
+            pass#raise NotImplementedError("Region B is not implemented in this version of the code.")
+
 
         return z_out
 
@@ -815,7 +812,7 @@ class AmpInterpKerrEccEq_nex(AmplitudeBase, KerrEccentricEquatorial_nex):
 
         for elem in [u, w, z]:
             if self.xp.any((elem < 0) | (elem > 1)):
-                raise ValueError("Amplitude interpolant accessed out-of-bounds.")
+                raise ValueError(f"Amplitude interpolant accessed out-of-bounds, with {elem}")
 
         if z_check in self.z_values:
             try:

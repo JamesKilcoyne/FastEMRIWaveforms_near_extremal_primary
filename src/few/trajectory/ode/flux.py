@@ -853,7 +853,7 @@ class KerrEccEqFlux_nex(ODEBase):
 
         self.flux_output_convention = flux_output_convention
 
-        fp = "KerrEccEqFluxData_nex_v2.h5"
+        fp = "KerrEccEqFluxData_nex_v3.h5"
  
         if downsample is None:
             downsample = [(1, 1, 1), (1, 1, 1)]

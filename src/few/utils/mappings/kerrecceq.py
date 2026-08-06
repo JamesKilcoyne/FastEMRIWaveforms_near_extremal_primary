@@ -28,7 +28,7 @@ DELTAPMIN_REGIONB = 9
 
 #Parameters for region C (near-extremal region)
 
-DELTAPMIN_REGIONC = 10**(-1.625)           
+DELTAPMIN_REGIONC = 10**(-2)           
 DELTAPMIN_REGIONC_amp= 10**(-2)
 DELTAPMAX_nex = 10
 DELTAPMAX_REGIONC = DELTAPMAX_nex     #redundant
